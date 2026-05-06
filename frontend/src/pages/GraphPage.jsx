@@ -48,8 +48,8 @@ function GraphPage() {
     <section className="page">
       <h1 className="page-title">Transition graph</h1>
       <p className="muted dashboard-lead">
-        Empirical transitions between <strong>down</strong> / <strong>flat</strong> /{' '}
-        <strong>up</strong> daily returns for the chosen symbol.
+        Empirical transitions between percentage-return buckets (for example{' '}
+        <strong>0.00% to 0.50%</strong>) for the chosen symbol.
       </p>
 
       <div className="card dashboard-controls graph-controls">

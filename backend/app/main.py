@@ -55,16 +55,21 @@ def predict(
         le=60,
         description="Forecast horizon in trading days (distribution uses P^steps)",
     ),
-    threshold: float = Query(
-        0.003,
-        ge=0.0001,
-        le=0.1,
-        description="Daily return band treated as 'flat' (symmetric; outside is up/down)",
+    context_len: int = Query(
+        5,
+        ge=1,
+        le=10,
+        description="How many prior trading days to use as Markov context (default = 5)",
     ),
 ) -> dict:
     """Markov chain on discretized daily returns; matrix estimated from historical data."""
     try:
-        return run_prediction(symbol=symbol, period=period, steps=steps, threshold=threshold)
+        return run_prediction(
+            symbol=symbol,
+            period=period,
+            steps=steps,
+            context_len=context_len,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -73,14 +78,12 @@ def predict(
 def graph(
     symbol: str = Query("SPY", min_length=1, max_length=12),
     period: str = Query("2y"),
-    threshold: float = Query(0.003, ge=0.0001, le=0.1),
     edge_threshold: float = Query(0.05, ge=0.01, le=0.99),
 ) -> Response:
     try:
         png_image = render_graph_png(
             symbol=symbol,
             period=period,
-            threshold=threshold,
             edge_threshold=edge_threshold,
         )
         return Response(content=png_image, media_type="image/png")

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import API_BASE from '../config'
 
-const PREDICT_SCHEMA = 2
+const PREDICT_SCHEMA = 3
 
 function normalizeTickerList(raw) {
   return Array.from(
@@ -15,9 +15,9 @@ function normalizeTickerList(raw) {
 }
 
 function computeInvestScore(pred) {
-  const upNext = Number(pred?.next_state_probabilities?.up ?? 0)
-  const upHorizon = Number(pred?.distribution_after_horizon?.up ?? 0)
-  // Heuristic: emphasize multi-day "up" probability, lightly include next-day.
+  const upNext = Number(pred?.next_positive_probability ?? 0)
+  const upHorizon = Number(pred?.horizon_positive_probability ?? 0)
+  // Heuristic: emphasize multi-day positive-return probability.
   const score = 0.7 * upHorizon + 0.3 * upNext
   return Number.isFinite(score) ? score : 0
 }
@@ -32,6 +32,7 @@ function DashboardPage() {
   const [symbolInput, setSymbolInput] = useState('NVDA, MSFT')
   const [period, setPeriod] = useState('2y')
   const [steps, setSteps] = useState(5)
+  const [contextLen, setContextLen] = useState(5)
   const [selectedSymbol, setSelectedSymbol] = useState('SPY')
   const [dataBySymbol, setDataBySymbol] = useState({})
   const [errorsBySymbol, setErrorsBySymbol] = useState({})
@@ -47,6 +48,7 @@ function DashboardPage() {
       const qsBase = new URLSearchParams({
         period,
         steps: String(steps),
+        context_len: String(contextLen),
       }).toString()
 
     try {
@@ -101,7 +103,7 @@ function DashboardPage() {
       setIsLoading(false)
     }
     },
-    [period, selectedSymbol, steps, symbols],
+    [contextLen, period, selectedSymbol, steps, symbols],
   )
 
   useEffect(() => {
@@ -158,10 +160,9 @@ function DashboardPage() {
     <section className="page">
       <h1 className="page-title">Markov prediction (yfinance)</h1>
       <p className="muted dashboard-lead">
-        Daily returns are bucketed into <strong>down</strong>, <strong>flat</strong>, and{' '}
-        <strong>up</strong>. Transition probabilities are learned from history; the chart uses the
-        last known state and powers of the transition matrix for multi-day distributions. This is a
-        simple model—not investment advice.
+        Daily returns are bucketed into percentage ranges (for example <strong>0.00% to 0.50%</strong>),
+        and probabilities are estimated from a Markov model using the recent weekly sequence by
+        default (5 trading days). This is a statistical model, not investment advice.
       </p>
 
       <div className="card dashboard-controls">
@@ -207,6 +208,20 @@ function DashboardPage() {
             max={60}
             value={steps}
             onChange={(e) => setSteps(Number(e.target.value) || 1)}
+          />
+        </div>
+        <div className="dashboard-row">
+          <label className="stocks-label" htmlFor="pred-context">
+            Context days
+          </label>
+          <input
+            id="pred-context"
+            className="stocks-input"
+            type="number"
+            min={1}
+            max={10}
+            value={contextLen}
+            onChange={(e) => setContextLen(Number(e.target.value) || 1)}
           />
         </div>
         <div className="dashboard-actions">
@@ -294,7 +309,7 @@ function DashboardPage() {
       {!isLoading && !globalError && rows.length > 0 && (
         <>
           <div className="card">
-            <h2 className="subsection-title">Compare tickers (sorted by “up” likelihood)</h2>
+          <h2 className="subsection-title">Compare tickers (sorted by positive-return likelihood)</h2>
             <div className="compare-table-wrap">
               <table className="compare-table">
                 <thead>
@@ -303,7 +318,7 @@ function DashboardPage() {
                     <th>Current</th>
                     <th>Next (argmax)</th>
                     <th>P(next)</th>
-                    <th>P(up in {steps}d)</th>
+                    <th>P(positive in {steps}d)</th>
                     <th>Current price</th>
                     <th>Est. price +1d</th>
                     <th>Score</th>
@@ -312,7 +327,7 @@ function DashboardPage() {
                 <tbody>
                   {rows.map(({ sym, pred, score }) => {
                     const pNext = Number(pred?.confidence ?? 0)
-                    const pUpH = Number(pred?.distribution_after_horizon?.up ?? 0)
+                    const pUpH = Number(pred?.horizon_positive_probability ?? 0)
                     const isSelected = sym === selectedSymbol
                     const currentPx = pred?.current_price ?? pred?.last_close
                     return (
@@ -353,7 +368,7 @@ function DashboardPage() {
                   <p className="metric-value">{selectedData.symbol ?? selectedSymbol ?? '—'}</p>
                 </article>
                 <article className="card metric-card">
-                  <p className="metric-label">Last state (from last return)</p>
+                  <p className="metric-label">Last state bucket</p>
                   <p className="metric-value">{selectedData.current_state}</p>
                 </article>
                 <article className="card metric-card">
@@ -361,8 +376,22 @@ function DashboardPage() {
                   <p className="metric-value">{selectedData.predicted_state}</p>
                 </article>
                 <article className="card metric-card">
-                  <p className="metric-label">P(next day | today)</p>
+                  <p className="metric-label">P(most likely next bucket)</p>
                   <p className="metric-value">{(selectedData.confidence * 100).toFixed(2)}%</p>
+                </article>
+                <article className="card metric-card">
+                  <p className="metric-label">P(positive return next day)</p>
+                  <p className="metric-value">
+                    {(Number(selectedData.next_positive_probability ?? 0) * 100).toFixed(2)}%
+                  </p>
+                </article>
+                <article className="card metric-card">
+                  <p className="metric-label">
+                    P(positive return in {selectedData.horizon_steps}d)
+                  </p>
+                  <p className="metric-value">
+                    {(Number(selectedData.horizon_positive_probability ?? 0) * 100).toFixed(2)}%
+                  </p>
                 </article>
                 <article className="card metric-card">
                   <p className="metric-label">Last close</p>
@@ -410,7 +439,8 @@ function DashboardPage() {
               <div className="card muted-card">
                 <p className="muted small-print">
                   Model: {selectedData.model ?? 'empirical'} · Data: {selectedData.return_observations}{' '}
-                  return days · flat if |r| ≤ {selectedData.threshold}. Matrix uses Laplace smoothing.
+                  return days · Context: last {selectedData.context_len} day(s). Matrix uses Laplace
+                  smoothing + backoff.
                 </p>
               </div>
             </>
