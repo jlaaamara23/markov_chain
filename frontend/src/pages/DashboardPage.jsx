@@ -162,7 +162,7 @@ function DashboardPage() {
       <p className="muted dashboard-lead">
         Daily returns are bucketed into percentage ranges (for example <strong>0.00% to 0.50%</strong>),
         and probabilities are estimated from a Markov model using the recent weekly sequence by
-        default (5 trading days). This is a statistical model, not investment advice.
+        default (5 trading days).
       </p>
 
       <div className="card dashboard-controls">
@@ -412,13 +412,26 @@ function DashboardPage() {
               <div className="card">
                 <h2 className="subsection-title">Next-day probabilities</h2>
                 <ul className="prob-list">
-                  {Object.entries(selectedData.next_state_probabilities || {}).map(([k, v]) => (
-                    <li key={k}>
-                      <span>{k}</span>
-                      <span>{(Number(v) * 100).toFixed(2)}%</span>
-                    </li>
-                  ))}
+                  {Object.entries(selectedData.next_state_probabilities || {}).map(([k, v]) => {
+                    const contribution = Number(selectedData.next_state_expected_contributions?.[k] ?? 0)
+                    return (
+                      <li key={k}>
+                        <span>
+                          {k}
+                          <small className="muted">
+                            {' '}
+                            (תוחלת תרומה: {(contribution * 100).toFixed(3)}%)
+                          </small>
+                        </span>
+                        <span>{(Number(v) * 100).toFixed(2)}%</span>
+                      </li>
+                    )
+                  })}
                 </ul>
+                <p className="muted small-print">
+                  תוחלת יומית כוללת: {(Number(selectedData.expected_return_next_day ?? 0) * 100).toFixed(3)}
+                  %
+                </p>
               </div>
 
               <div className="card">

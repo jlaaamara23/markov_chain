@@ -248,6 +248,16 @@ def _positive_probability(
     return p
 
 
+def _expected_contributions_dict(
+    distribution: np.ndarray, state_mean_returns: dict[str, float], state_labels: list[str]
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for i, label in enumerate(state_labels):
+        contrib = float(distribution[i]) * float(state_mean_returns.get(label, 0.0))
+        out[label] = round(contrib, 6)
+    return out
+
+
 def run_prediction(
     symbol: str = "SPY",
     period: str = "2y",
@@ -317,6 +327,12 @@ def run_prediction(
         "predicted_state": state_labels[next_idx],
         "confidence": round(confidence, 6),
         "next_state_probabilities": _distribution_dict(row, state_labels),
+        "state_mean_returns_percent": {
+            k: round(float(v) * 100.0, 4) for k, v in state_mean_returns.items()
+        },
+        "next_state_expected_contributions": _expected_contributions_dict(
+            row, state_mean_returns, state_labels
+        ),
         "next_positive_probability": round(next_pos_prob, 6),
         "last_close": round(last_close, 6),
         "current_price": round(float(current_price), 6) if current_price is not None else None,
