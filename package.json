@@ -1,0 +1,11 @@
+{
+  "name": "markovchainproject",
+  "private": true,
+  "description": "TradeMind AI — frontend lives in frontend/",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "preview": "npm --prefix frontend run preview"
+  }
+}
