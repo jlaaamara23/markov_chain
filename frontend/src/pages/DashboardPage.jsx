@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import API_BASE from '../config'
 import AllocationPanel from '../components/AllocationPanel'
 import AnalysisTable from '../components/AnalysisTable'
+import PriceHistoryChart from '../components/PriceHistoryChart'
 import RecommendationBadge from '../components/RecommendationBadge'
 import RiskBadge from '../components/RiskBadge'
 import StatCard from '../components/StatCard'
@@ -395,6 +396,13 @@ function SelectedTickerDetail({ row }) {
           </div>
         </div>
       </div>
+
+      <PriceHistoryChart
+        symbol={symbol}
+        currency={currency ?? 'USD'}
+        currentPrice={current_price}
+        fallbackLastClose={last_close}
+      />
 
       <div className="card-grid">
         <StatCard

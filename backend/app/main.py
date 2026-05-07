@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.analyze import analyze_symbols
+from app.history import get_history
 from app.markov import render_graph_png, run_prediction
 from app.stocks import router as stocks_router
 
@@ -115,6 +116,24 @@ def analyze(
             steps=steps,
             context_len=context_len,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/history/{symbol}")
+def history(
+    symbol: str,
+    period: str = Query(
+        "1y",
+        description="yfinance history window, e.g. 1mo, 3mo, 6mo, 1y, 2y, 5y, max",
+    ),
+) -> dict:
+    """Time series for the dashboard's price chart.
+
+    Returns close + 20/50-day moving averages with ISO date strings.
+    """
+    try:
+        return get_history(symbol=symbol, period=period)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
