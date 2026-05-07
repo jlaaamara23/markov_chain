@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.analyze import analyze_symbols
 from app.markov import render_graph_png, run_prediction
 from app.stocks import router as stocks_router
 
@@ -66,6 +67,50 @@ def predict(
     try:
         return run_prediction(
             symbol=symbol,
+            period=period,
+            steps=steps,
+            context_len=context_len,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/analyze")
+def analyze(
+    symbols: str = Query(
+        "SPY,AAPL,MSFT,NVDA",
+        min_length=1,
+        max_length=512,
+        description="Comma- or space-separated tickers to analyze (max 25)",
+    ),
+    period: str = Query(
+        "2y",
+        description="yfinance history window, e.g. 6mo, 1y, 2y, 5y, max",
+    ),
+    steps: int = Query(
+        5,
+        ge=1,
+        le=60,
+        description="Forecast horizon in trading days for the Markov component",
+    ),
+    context_len: int = Query(
+        5,
+        ge=1,
+        le=10,
+        description="Markov context length (prior trading days used to predict next state)",
+    ),
+) -> dict:
+    """Combined indicators + Markov + scoring analysis for a list of tickers.
+
+    Returns ranked results (highest profit_score first), per-ticker errors,
+    and metadata. Built for the dashboard UI.
+    """
+    parsed = [s for s in symbols.replace(",", " ").split() if s]
+    if not parsed:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+    try:
+        return analyze_symbols(
+            symbols=parsed,
             period=period,
             steps=steps,
             context_len=context_len,

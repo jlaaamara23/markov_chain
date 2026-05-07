@@ -258,24 +258,27 @@ def _expected_contributions_dict(
     return out
 
 
-def run_prediction(
-    symbol: str = "SPY",
-    period: str = "2y",
+def run_prediction_from_closes(
+    close_prices: np.ndarray,
+    symbol: str,
+    period: str,
     steps: int = 1,
     context_len: int = 5,
+    current_price: float | None = None,
 ) -> dict[str, Any]:
-    """
-    Build a variable-order Markov chain from binned daily returns (yfinance), then:
-    - current_context: last `context_len` discretized return states (default = 5 trading days)
-    - next_state_probabilities: probability over return-range scenarios for the next day
-    - distribution_after_horizon: multi-step state distribution via Monte Carlo simulation
+    """Run the Markov chain on a pre-fetched close-price array.
+
+    Useful when the caller has already fetched yfinance data (e.g. the
+    /analyze endpoint also wants OHLCV for indicators) and wants to avoid
+    a second network round-trip.
     """
     if steps < 1 or steps > 60:
         raise ValueError("steps must be between 1 and 60")
     if context_len < 1 or context_len > 10:
         raise ValueError("context_len must be between 1 and 10")
+    if close_prices.size < 3:
+        raise ValueError(f"Not enough close observations for {_normalize_symbol(symbol)}")
 
-    close_prices = _price_history(symbol, period)
     returns = close_prices[1:] / close_prices[:-1] - 1.0
     state_labels = _build_bin_labels(DEFAULT_BIN_EDGES)
     states = _returns_to_binned_states(returns, DEFAULT_BIN_EDGES, state_labels)
@@ -299,7 +302,6 @@ def run_prediction(
     )
     last_close = float(close_prices[-1])
     estimated_next_close = last_close * (1.0 + expected_return_next_day)
-    current_price = _current_price(symbol)
 
     dist = _simulate_horizon_distribution(
         history=recent_context,
@@ -343,6 +345,30 @@ def run_prediction(
         "horizon_positive_probability": round(horizon_pos_prob, 6),
         "first_order_transition_matrix": _matrix_to_nested_dict(first_order_matrix, state_labels),
     }
+
+
+def run_prediction(
+    symbol: str = "SPY",
+    period: str = "2y",
+    steps: int = 1,
+    context_len: int = 5,
+) -> dict[str, Any]:
+    """
+    Build a variable-order Markov chain from binned daily returns (yfinance), then:
+    - current_context: last `context_len` discretized return states (default = 5 trading days)
+    - next_state_probabilities: probability over return-range scenarios for the next day
+    - distribution_after_horizon: multi-step state distribution via Monte Carlo simulation
+    """
+    close_prices = _price_history(symbol, period)
+    current_price = _current_price(symbol)
+    return run_prediction_from_closes(
+        close_prices=close_prices,
+        symbol=symbol,
+        period=period,
+        steps=steps,
+        context_len=context_len,
+        current_price=current_price,
+    )
 
 
 def render_graph_png(

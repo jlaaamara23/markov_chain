@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import API_BASE from '../config'
+import AllocationPanel from '../components/AllocationPanel'
+import AnalysisTable from '../components/AnalysisTable'
+import RecommendationBadge from '../components/RecommendationBadge'
+import RiskBadge from '../components/RiskBadge'
+import StatCard from '../components/StatCard'
 
-const PREDICT_SCHEMA = 3
+const ANALYZE_SCHEMA = 1
+const RISK_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'low', label: 'Low risk' },
+  { id: 'medium', label: 'Medium risk' },
+  { id: 'high', label: 'High risk' },
+]
 
 function normalizeTickerList(raw) {
   return Array.from(
@@ -14,127 +25,129 @@ function normalizeTickerList(raw) {
   ).slice(0, 12)
 }
 
-function computeInvestScore(pred) {
-  const upNext = Number(pred?.next_positive_probability ?? 0)
-  const upHorizon = Number(pred?.horizon_positive_probability ?? 0)
-  // Heuristic: emphasize multi-day positive-return probability.
-  const score = 0.7 * upHorizon + 0.3 * upNext
-  return Number.isFinite(score) ? score : 0
+function formatNumber(value, digits = 2) {
+  if (!Number.isFinite(Number(value))) return '—'
+  return Number(value).toFixed(digits)
 }
 
-function formatPrice(value) {
+function formatPercent(value, digits = 2) {
   if (!Number.isFinite(Number(value))) return '—'
-  return Number(value).toFixed(2)
+  return `${(Number(value) * 100).toFixed(digits)}%`
+}
+
+function formatSignedPercent(value, digits = 2) {
+  if (!Number.isFinite(Number(value))) return '—'
+  const num = Number(value) * 100
+  const sign = num > 0 ? '+' : ''
+  return `${sign}${num.toFixed(digits)}%`
+}
+
+function trendCopy(direction) {
+  if (direction === 'up') return 'Uptrend (SMA20 > SMA50)'
+  if (direction === 'down') return 'Downtrend (SMA20 < SMA50)'
+  return 'Sideways (SMAs converging)'
+}
+
+function rsiHint(rsi) {
+  if (!Number.isFinite(Number(rsi))) return ''
+  const v = Number(rsi)
+  if (v >= 70) return 'Overbought'
+  if (v <= 30) return 'Oversold'
+  if (v >= 55) return 'Mild momentum up'
+  if (v <= 45) return 'Mild momentum down'
+  return 'Neutral'
 }
 
 function DashboardPage() {
-  const [symbols, setSymbols] = useState(['SPY', 'AAPL'])
-  const [symbolInput, setSymbolInput] = useState('NVDA, MSFT')
+  const [symbols, setSymbols] = useState(['SPY', 'AAPL', 'MSFT', 'NVDA'])
+  const [symbolInput, setSymbolInput] = useState('')
   const [period, setPeriod] = useState('2y')
   const [steps, setSteps] = useState(5)
   const [contextLen, setContextLen] = useState(5)
   const [selectedSymbol, setSelectedSymbol] = useState('SPY')
-  const [dataBySymbol, setDataBySymbol] = useState({})
+  const [riskFilter, setRiskFilter] = useState('all')
+
+  const [analysis, setAnalysis] = useState(null)
   const [errorsBySymbol, setErrorsBySymbol] = useState({})
   const [isLoading, setIsLoading] = useState(true)
   const [globalError, setGlobalError] = useState('')
 
-  const loadPredictions = useCallback(
+  const loadAnalysis = useCallback(
     async (signal) => {
       const list = symbols.filter(Boolean)
-      if (list.length === 0) return
-      if (!list.includes(selectedSymbol)) setSelectedSymbol(list[0])
+      if (list.length === 0) {
+        setAnalysis(null)
+        setIsLoading(false)
+        return
+      }
 
-      const qsBase = new URLSearchParams({
-        period,
-        steps: String(steps),
-        context_len: String(contextLen),
-      }).toString()
-
-    try {
-      setIsLoading(true)
+      try {
+        setIsLoading(true)
         setGlobalError('')
 
-        const settled = await Promise.allSettled(
-          list.map(async (sym) => {
-            try {
-              const qs = new URLSearchParams(qsBase)
-              qs.set('symbol', sym)
-              const response = await fetch(`${API_BASE}/predict?${qs}`, { signal })
-              if (!response.ok) {
-                const body = await response.json().catch(() => ({}))
-                const detail = body.detail
-                throw new Error(
-                  typeof detail === 'string' ? detail : `Request failed (${response.status})`,
-                )
-              }
-              const json = await response.json()
-              return { sym, ok: true, json }
-            } catch (e) {
-              return { sym, ok: false, error: e?.message || 'Unable to load prediction.' }
-            }
-          }),
-        )
+        const qs = new URLSearchParams({
+          symbols: list.join(','),
+          period,
+          steps: String(steps),
+          context_len: String(contextLen),
+        }).toString()
 
-        const nextData = {}
-        const nextErrors = {}
-        for (const item of settled) {
-          if (item.status === 'fulfilled') {
-            if (item.value.ok) {
-              nextData[item.value.sym] = item.value.json
-            } else {
-              nextErrors[item.value.sym] = item.value.error
-            }
-          } else {
-            // Should be rare since we catch inside, but keep a fallback.
-            const msg = item.reason?.message || 'Unable to load prediction.'
-            nextErrors.unknown = msg
+        const response = await fetch(`${API_BASE}/analyze?${qs}`, { signal })
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}))
+          const detail = body.detail
+          throw new Error(
+            typeof detail === 'string' ? detail : `Request failed (${response.status})`,
+          )
+        }
+        const json = await response.json()
+        setAnalysis(json)
+        setErrorsBySymbol(json.errors ?? {})
+
+        if (Array.isArray(json.results) && json.results.length > 0) {
+          const stillThere = json.results.find((r) => r.symbol === selectedSymbol)
+          if (!stillThere) {
+            setSelectedSymbol(json.results[0].symbol)
           }
         }
-
-        // Keep prior good data if a refresh fails for a subset
-        setDataBySymbol((prev) => ({ ...prev, ...nextData }))
-        setErrorsBySymbol(nextErrors)
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-          setGlobalError(err.message || 'Unable to load predictions right now.')
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setGlobalError(err.message || 'Unable to load analysis right now.')
+        }
+      } finally {
+        setIsLoading(false)
       }
-    } finally {
-      setIsLoading(false)
-    }
     },
     [contextLen, period, selectedSymbol, steps, symbols],
   )
 
   useEffect(() => {
     const controller = new AbortController()
-    loadPredictions(controller.signal)
+    // Defer to a microtask so synchronous setState calls inside loadAnalysis
+    // run after the effect body, satisfying react-hooks/set-state-in-effect.
+    Promise.resolve().then(() => {
+      if (!controller.signal.aborted) loadAnalysis(controller.signal)
+    })
     return () => controller.abort()
-  }, [loadPredictions])
+  }, [loadAnalysis])
 
-  const selectedData = dataBySymbol[selectedSymbol] ?? null
+  const allRows = useMemo(() => analysis?.results ?? [], [analysis])
 
-  const rows = useMemo(() => {
-    const list = symbols
-      .map((sym) => {
-        const pred = dataBySymbol[sym]
-        const score = pred ? computeInvestScore(pred) : 0
-        return { sym, pred, score }
-      })
-      .filter((r) => r.sym)
+  const filteredRows = useMemo(() => {
+    if (riskFilter === 'all') return allRows
+    return allRows.filter((r) => r.scoring?.risk_level === riskFilter)
+  }, [allRows, riskFilter])
 
-    list.sort((a, b) => b.score - a.score)
-    return list
-  }, [dataBySymbol, symbols])
+  const selectedRow = useMemo(
+    () => allRows.find((r) => r.symbol === selectedSymbol) ?? null,
+    [allRows, selectedSymbol],
+  )
 
   const addSymbols = useCallback(() => {
     const toAdd = normalizeTickerList(symbolInput)
     if (toAdd.length === 0) return
-    setSymbols((prev) => {
-      const merged = Array.from(new Set([...prev, ...toAdd])).slice(0, 12)
-      return merged
-    })
-    setSelectedSymbol((prevSelected) => prevSelected || toAdd[0])
+    setSymbols((prev) => Array.from(new Set([...prev, ...toAdd])).slice(0, 12))
+    setSelectedSymbol((prev) => prev || toAdd[0])
     setSymbolInput('')
   }, [symbolInput])
 
@@ -147,22 +160,22 @@ function DashboardPage() {
         }
         return next
       })
-      setDataBySymbol((prev) => {
-        const copy = { ...prev }
-        delete copy[sym]
-        return copy
-      })
     },
     [selectedSymbol],
   )
 
+  const horizonSteps = analysis?.horizon_steps ?? steps
+  const errorEntries = Object.entries(errorsBySymbol)
+  const schemaMismatch =
+    analysis !== null && analysis.schema_version !== ANALYZE_SCHEMA
+
   return (
     <section className="page">
-      <h1 className="page-title">Markov prediction (yfinance)</h1>
+      <h1 className="page-title">Investment analysis</h1>
       <p className="muted dashboard-lead">
-        Daily returns are bucketed into percentage ranges (for example <strong>0.00% to 0.50%</strong>),
-        and probabilities are estimated from a Markov model using the recent weekly sequence by
-        default (5 trading days).
+        Combines technical indicators (stdev, moving averages, RSI, momentum, volume) with the
+        Markov chain to produce a profit-potential score, a risk level, and a recommendation per
+        ticker. Higher score = stronger forward setup.
       </p>
 
       <div className="card dashboard-controls">
@@ -228,7 +241,7 @@ function DashboardPage() {
           <button type="button" className="primary-btn" onClick={addSymbols}>
             Add symbols
           </button>
-          <button type="button" className="primary-btn" onClick={() => loadPredictions()}>
+          <button type="button" className="primary-btn" onClick={() => loadAnalysis()}>
             Refresh
           </button>
         </div>
@@ -268,199 +281,240 @@ function DashboardPage() {
 
       {isLoading && (
         <div className="card">
-          <p className="loading">Loading prediction…</p>
+          <p className="loading">Running analysis…</p>
         </div>
       )}
 
-      {!isLoading && (globalError || Object.keys(errorsBySymbol).length > 0) && (
+      {!isLoading && globalError && (
         <div className="card error-card">
-          <h2>Could not load prediction(s)</h2>
-          {globalError && <p>{globalError}</p>}
-          {!globalError && Object.keys(errorsBySymbol).length > 0 && (
-            <>
-              <p>Some tickers failed to load:</p>
+          <h2>Could not run analysis</h2>
+          <p>{globalError}</p>
+        </div>
+      )}
+
+      {!isLoading && schemaMismatch && (
+        <div className="card error-card">
+          <h2>Backend is running old code</h2>
+          <p>
+            This dashboard needs the analysis API (
+            <code>schema_version: {ANALYZE_SCHEMA}</code>). Restart the backend with{' '}
+            <code className="inline-code">
+              python -m uvicorn app.main:app --reload --port 8001
+            </code>
+            .
+          </p>
+        </div>
+      )}
+
+      {!isLoading && analysis && analysis.schema_version === ANALYZE_SCHEMA && (
+        <>
+          <div className="card">
+            <div className="analysis-header">
+              <h2 className="subsection-title">
+                Ranked stocks ({filteredRows.length} of {allRows.length})
+              </h2>
+              <div className="risk-filter-row" role="tablist" aria-label="Filter by risk">
+                {RISK_FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={riskFilter === f.id}
+                    className={
+                      riskFilter === f.id
+                        ? 'risk-filter risk-filter--active'
+                        : 'risk-filter'
+                    }
+                    onClick={() => setRiskFilter(f.id)}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <AnalysisTable
+              rows={filteredRows}
+              selectedSymbol={selectedSymbol}
+              onSelect={setSelectedSymbol}
+              horizonSteps={horizonSteps}
+            />
+          </div>
+
+          {errorEntries.length > 0 && (
+            <div className="card error-card">
+              <h2>Some tickers failed</h2>
               <ul className="muted">
-                {Object.entries(errorsBySymbol).map(([sym, msg]) => (
+                {errorEntries.map(([sym, msg]) => (
                   <li key={sym}>
                     <strong>{sym}</strong>: {msg}
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-        </div>
-      )}
-
-      {!isLoading && !globalError && selectedData && selectedData.schema_version !== PREDICT_SCHEMA && (
-        <div className="card error-card">
-          <h2>Backend is running old code</h2>
-          <p>
-            This dashboard needs the yfinance Markov API (<code>schema_version: {PREDICT_SCHEMA}</code>
-            ). Your response has no symbol and still uses the old random 5-asset model. Stop the server,
-            open the <strong>backend</strong> folder that contains the current <code>markov.py</code>, then
-            run:{' '}
-            <code className="inline-code">
-              python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
-            </code>
-          </p>
-        </div>
-      )}
-
-      {!isLoading && !globalError && rows.length > 0 && (
-        <>
-          <div className="card">
-          <h2 className="subsection-title">Compare tickers (sorted by positive-return likelihood)</h2>
-            <div className="compare-table-wrap">
-              <table className="compare-table">
-                <thead>
-                  <tr>
-                    <th>Ticker</th>
-                    <th>Current</th>
-                    <th>Next (argmax)</th>
-                    <th>P(next)</th>
-                    <th>P(positive in {steps}d)</th>
-                    <th>Current price</th>
-                    <th>Est. price +1d</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(({ sym, pred, score }) => {
-                    const pNext = Number(pred?.confidence ?? 0)
-                    const pUpH = Number(pred?.horizon_positive_probability ?? 0)
-                    const isSelected = sym === selectedSymbol
-                    const currentPx = pred?.current_price ?? pred?.last_close
-                    return (
-                      <tr
-                        key={sym}
-                        className={isSelected ? 'compare-row compare-row--active' : 'compare-row'}
-                        onClick={() => setSelectedSymbol(sym)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            setSelectedSymbol(sym)
-                          }
-                        }}
-                      >
-                        <td className="compare-ticker">{sym}</td>
-                        <td className="compare-cap">{pred?.current_state ?? '—'}</td>
-                        <td className="compare-cap">{pred?.predicted_state ?? '—'}</td>
-                        <td>{pred ? `${(pNext * 100).toFixed(2)}%` : '—'}</td>
-                        <td>{pred ? `${(pUpH * 100).toFixed(2)}%` : '—'}</td>
-                        <td>{pred ? formatPrice(currentPx) : '—'}</td>
-                        <td>{pred ? formatPrice(pred.estimated_next_close) : '—'}</td>
-                        <td>{pred ? (score * 100).toFixed(2) : '—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
             </div>
-          </div>
-
-          {selectedData && selectedData.schema_version === PREDICT_SCHEMA && (
-            <>
-              <div className="card-grid">
-                <article className="card metric-card">
-                  <p className="metric-label">Selected ticker</p>
-                  <p className="metric-value">{selectedData.symbol ?? selectedSymbol ?? '—'}</p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">Last state bucket</p>
-                  <p className="metric-value">{selectedData.current_state}</p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">Most likely next day</p>
-                  <p className="metric-value">{selectedData.predicted_state}</p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">P(most likely next bucket)</p>
-                  <p className="metric-value">{(selectedData.confidence * 100).toFixed(2)}%</p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">P(positive return next day)</p>
-                  <p className="metric-value">
-                    {(Number(selectedData.next_positive_probability ?? 0) * 100).toFixed(2)}%
-                  </p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">
-                    P(positive return in {selectedData.horizon_steps}d)
-                  </p>
-                  <p className="metric-value">
-                    {(Number(selectedData.horizon_positive_probability ?? 0) * 100).toFixed(2)}%
-                  </p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">Last close</p>
-                  <p className="metric-value">{formatPrice(selectedData.last_close)}</p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">Current price</p>
-                  <p className="metric-value">
-                    {formatPrice(selectedData.current_price ?? selectedData.last_close)}
-                  </p>
-                </article>
-                <article className="card metric-card">
-                  <p className="metric-label">Estimated close (+1d)</p>
-                  <p className="metric-value">{formatPrice(selectedData.estimated_next_close)}</p>
-                </article>
-              </div>
-
-              <div className="card">
-                <h2 className="subsection-title">Next-day probabilities</h2>
-                <ul className="prob-list">
-                  {Object.entries(selectedData.next_state_probabilities || {}).map(([k, v]) => {
-                    const contribution = Number(selectedData.next_state_expected_contributions?.[k] ?? 0)
-                    return (
-                      <li key={k}>
-                        <span>
-                          {k}
-                          <small className="muted">
-                            {' '}
-                            (תוחלת תרומה: {(contribution * 100).toFixed(3)}%)
-                          </small>
-                        </span>
-                        <span>{(Number(v) * 100).toFixed(2)}%</span>
-                      </li>
-                    )
-                  })}
-                </ul>
-                <p className="muted small-print">
-                  תוחלת יומית כוללת: {(Number(selectedData.expected_return_next_day ?? 0) * 100).toFixed(3)}
-                  %
-                </p>
-              </div>
-
-              <div className="card">
-                <h2 className="subsection-title">
-                  After {selectedData.horizon_steps} day{selectedData.horizon_steps === 1 ? '' : 's'} (π
-                  P<sup>{selectedData.horizon_steps}</sup>)
-                </h2>
-                <ul className="prob-list">
-                  {Object.entries(selectedData.distribution_after_horizon || {}).map(([k, v]) => (
-                    <li key={k}>
-                      <span>{k}</span>
-                      <span>{(Number(v) * 100).toFixed(2)}%</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="card muted-card">
-                <p className="muted small-print">
-                  Model: {selectedData.model ?? 'empirical'} · Data: {selectedData.return_observations}{' '}
-                  return days · Context: last {selectedData.context_len} day(s). Matrix uses Laplace
-                  smoothing + backoff.
-                </p>
-              </div>
-            </>
           )}
+
+          <AllocationPanel results={allRows} />
+
+          {selectedRow && <SelectedTickerDetail row={selectedRow} />}
         </>
       )}
     </section>
+  )
+}
+
+function SelectedTickerDetail({ row }) {
+  const { symbol, name, currency, last_close, current_price, change_percent } = row
+  const ind = row.indicators ?? {}
+  const mk = row.markov ?? {}
+  const detail = row.markov_detail ?? null
+  const scoring = row.scoring ?? {}
+
+  const change = Number(change_percent ?? 0)
+  const priceText = `${formatNumber(current_price ?? last_close, 2)}${currency ? ` ${currency}` : ''}`
+  const trendDir = ind.trend_direction ?? 'sideways'
+
+  return (
+    <>
+      <div className="card selected-summary">
+        <div className="selected-summary__top">
+          <div>
+            <h2 className="selected-summary__title">
+              {symbol} <span className="selected-summary__name">{name ?? ''}</span>
+            </h2>
+            <p className="muted small-print">
+              {priceText} · last close {formatNumber(last_close, 2)} · change{' '}
+              <span className={change >= 0 ? 'text-up' : 'text-down'}>
+                {change >= 0 ? '+' : ''}
+                {change.toFixed(2)}%
+              </span>
+            </p>
+          </div>
+          <div className="selected-summary__badges">
+            <RecommendationBadge recommendation={scoring.recommendation} />
+            <RiskBadge level={scoring.risk_level} />
+          </div>
+        </div>
+      </div>
+
+      <div className="card-grid">
+        <StatCard
+          label="Profit score"
+          value={`${formatNumber(scoring.profit_score, 1)} / 100`}
+          accent={scoring.recommendation_color}
+          hint="Weighted blend of momentum, trend, RSI, volume, Markov P(+), volatility penalty."
+        />
+        <StatCard
+          label="Volatility score"
+          value={`${formatNumber(ind.volatility_score, 1)} / 100`}
+          hint={
+            (ind.volatility_score ?? 0) < 30
+              ? 'Low standard deviation — relatively stable stock.'
+              : (ind.volatility_score ?? 0) < 60
+                ? 'Moderate volatility.'
+                : 'High standard deviation — risky / volatile stock.'
+          }
+        />
+        <StatCard
+          label="Stdev (annualized)"
+          value={formatPercent(ind.stdev_annualized, 2)}
+          hint={`Daily stdev: ${formatPercent(ind.stdev_daily, 3)}`}
+        />
+        <StatCard
+          label="RSI(14)"
+          value={formatNumber(ind.rsi_14, 1)}
+          hint={rsiHint(ind.rsi_14)}
+        />
+        <StatCard
+          label="Moving averages"
+          value={`MA20 ${formatNumber(ind.ma_20, 2)} · MA50 ${formatNumber(ind.ma_50, 2)}`}
+          hint={trendCopy(trendDir)}
+        />
+        <StatCard
+          label="Momentum"
+          value={`20d ${formatSignedPercent(ind.momentum_20d, 2)} · 60d ${formatSignedPercent(ind.momentum_60d, 2)}`}
+          hint={`Period growth: ${formatSignedPercent(ind.historical_growth, 2)}`}
+        />
+        <StatCard
+          label="Volume change"
+          value={formatSignedPercent(ind.volume_change, 1)}
+          hint="Last 5 sessions vs prior 20-session baseline."
+        />
+        <StatCard
+          label={`P(positive in ${detail?.horizon_steps ?? mk.horizon_steps ?? '?'}d)`}
+          value={formatPercent(mk.horizon_positive_probability, 1)}
+          hint={`Next-day P(+): ${formatPercent(mk.next_positive_probability, 1)}`}
+        />
+        <StatCard
+          label="Estimated next close"
+          value={formatNumber(mk.estimated_next_close, 2)}
+          hint={`Markov expected next-day return: ${formatSignedPercent(mk.expected_return_next_day, 3)}`}
+        />
+      </div>
+
+      <div className="card">
+        <h2 className="subsection-title">Score breakdown</h2>
+        <ul className="prob-list">
+          {Object.entries(scoring.score_breakdown ?? {}).map(([name, info]) => (
+            <li key={name}>
+              <span>
+                {name.replace(/_/g, ' ')}
+                <small className="muted"> (weight {(info.weight * 100).toFixed(0)}%)</small>
+              </span>
+              <span>+{Number(info.contribution ?? 0).toFixed(2)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {detail && (
+        <>
+          <div className="card">
+            <h2 className="subsection-title">Next-day Markov probabilities</h2>
+            <ul className="prob-list">
+              {Object.entries(detail.next_state_probabilities || {}).map(([k, v]) => {
+                const contribution = Number(detail.next_state_expected_contributions?.[k] ?? 0)
+                return (
+                  <li key={k}>
+                    <span>
+                      {k}
+                      <small className="muted">
+                        {' '}(expected contribution: {(contribution * 100).toFixed(3)}%)
+                      </small>
+                    </span>
+                    <span>{(Number(v) * 100).toFixed(2)}%</span>
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="muted small-print">
+              Total expected next-day return:{' '}
+              {(Number(detail.expected_return_next_day ?? 0) * 100).toFixed(3)}%
+            </p>
+          </div>
+
+          <div className="card">
+            <h2 className="subsection-title">
+              After {detail.horizon_steps} day{detail.horizon_steps === 1 ? '' : 's'} (Monte Carlo)
+            </h2>
+            <ul className="prob-list">
+              {Object.entries(detail.distribution_after_horizon || {}).map(([k, v]) => (
+                <li key={k}>
+                  <span>{k}</span>
+                  <span>{(Number(v) * 100).toFixed(2)}%</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card muted-card">
+            <p className="muted small-print">
+              Model: {detail.model ?? 'empirical'} · Data: {detail.return_observations} return days ·
+              Context: last {detail.context_len} day(s). Matrix uses Laplace smoothing + backoff.
+            </p>
+          </div>
+        </>
+      )}
+    </>
   )
 }
 
