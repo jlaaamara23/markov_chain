@@ -212,27 +212,176 @@ def _predict_next_distribution(
     raise ValueError("Unable to predict next distribution from history")
 
 
-def _simulate_horizon_distribution(
-    history: list[str],
-    state_labels: list[str],
-    chain_levels: dict[int, dict[tuple[str, ...], np.ndarray]],
-    context_len: int,
+def _project_horizon_distribution(
+    current_state_idx: int,
+    transition_matrix: np.ndarray,
     horizon_steps: int,
-    n_sims: int = 5000,
 ) -> np.ndarray:
-    state_to_i = {s: i for i, s in enumerate(state_labels)}
-    final_counts = np.zeros(len(state_labels), dtype=float)
-    rng = np.random.default_rng(42)
+    """Deterministic multi-step forecast: π_horizon = one_hot(current) @ P^steps."""
+    n = transition_matrix.shape[0]
+    initial = np.zeros(n, dtype=float)
+    initial[current_state_idx] = 1.0
+    powered = np.linalg.matrix_power(transition_matrix, horizon_steps)
+    return initial @ powered
 
-    for _ in range(n_sims):
-        seq = list(history)
-        for _step in range(horizon_steps):
-            dist = _predict_next_distribution(seq, chain_levels, context_len)
-            next_i = int(rng.choice(len(state_labels), p=dist))
-            seq.append(state_labels[next_i])
-        final_state = seq[-1]
-        final_counts[state_to_i[final_state]] += 1.0
-    return final_counts / final_counts.sum()
+
+def _compute_equilibrium_distribution(
+    transition_matrix: np.ndarray,
+    tol: float = 1e-10,
+    max_iter: int = 10_000,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Stationary distribution π where π = πP (power iteration, no randomness)."""
+    n = transition_matrix.shape[0]
+    pi = np.ones(n, dtype=float) / n
+    iterations = 0
+    converged = False
+    for i in range(1, max_iter + 1):
+        pi_next = pi @ transition_matrix
+        if float(np.linalg.norm(pi_next - pi, ord=1)) < tol:
+            pi = pi_next
+            iterations = i
+            converged = True
+            break
+        pi = pi_next
+        iterations = i
+    pi = pi / pi.sum()
+    return pi, {
+        "iterations": iterations,
+        "converged": converged,
+        "tolerance": tol,
+        "method": "power_iteration",
+        "formula": "π_{k+1} = π_k P until ||π_{k+1} − π_k||₁ < tolerance",
+    }
+
+
+def _build_calculation_sources(
+    *,
+    last_close: float,
+    expected_return_next_day: float,
+    estimated_next_close: float,
+    current_state: str,
+    current_state_idx: int,
+    predicted_state: str,
+    confidence: float,
+    next_pos_prob: float,
+    horizon_steps: int,
+    horizon_pos_prob: float,
+    expected_return_horizon: float,
+    estimated_close_horizon: float,
+    equilibrium_meta: dict[str, Any],
+    equilibrium_pos_prob: float,
+    context_len: int,
+    recent_context: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Provenance for UI: tap a number to see how it was derived."""
+    return {
+        "estimated_next_close": {
+            "method": "markov_chain_next_day",
+            "formula": "last_close × (1 + expected_return_next_day)",
+            "description": (
+                "Expected next close from the variable-order Markov chain: "
+                "weighted average of historical mean returns in each next-day state bin."
+            ),
+            "inputs": {
+                "last_close": round(last_close, 6),
+                "expected_return_next_day": round(expected_return_next_day, 6),
+            },
+        },
+        "expected_return_next_day": {
+            "method": "markov_chain_next_day",
+            "formula": "Σ P(next_state) × mean_return(state)",
+            "description": (
+                f"Analytic next-day distribution from the last {context_len} return bins "
+                f"({', '.join(recent_context)}), with Laplace smoothing and backoff."
+            ),
+            "inputs": {
+                "context": recent_context,
+                "context_len": context_len,
+            },
+        },
+        "next_positive_probability": {
+            "method": "markov_chain_next_day",
+            "formula": "Σ P(state) for bins with lower bound ≥ 0%",
+            "description": "Sum of next-day Markov probabilities over non-negative return bins.",
+            "inputs": {"current_state": current_state},
+        },
+        "predicted_state": {
+            "method": "markov_chain_next_day",
+            "formula": "argmax P(next_state | context)",
+            "description": "Most likely next-day return bin from the Markov chain.",
+            "inputs": {
+                "predicted_state": predicted_state,
+                "confidence": round(confidence, 6),
+                "context": recent_context,
+            },
+        },
+        "horizon_positive_probability": {
+            "method": "markov_chain_matrix_power",
+            "formula": f"one_hot({current_state}) @ P^{horizon_steps}, then sum P(state) for bins ≥ 0%",
+            "description": (
+                "Deterministic multi-step forecast using the empirical first-order "
+                "transition matrix P (no Monte Carlo, no moving averages)."
+            ),
+            "inputs": {
+                "current_state": current_state,
+                "current_state_index": current_state_idx,
+                "horizon_steps": horizon_steps,
+            },
+        },
+        "distribution_after_horizon": {
+            "method": "markov_chain_matrix_power",
+            "formula": f"π_horizon = one_hot(current_state) @ P^{horizon_steps}",
+            "description": "State probabilities after n trading days via matrix exponentiation.",
+            "inputs": {
+                "current_state": current_state,
+                "horizon_steps": horizon_steps,
+            },
+        },
+        "expected_return_horizon": {
+            "method": "markov_chain_matrix_power",
+            "formula": "Σ P_horizon(state) × mean_return(state)",
+            "description": "Expected cumulative return implied by the horizon state distribution.",
+            "inputs": {"horizon_steps": horizon_steps},
+        },
+        "estimated_close_horizon": {
+            "method": "markov_chain_matrix_power",
+            "formula": "last_close × (1 + expected_return_horizon)",
+            "description": "Projected close after the forecast horizon from pure Markov math.",
+            "inputs": {
+                "last_close": round(last_close, 6),
+                "expected_return_horizon": round(expected_return_horizon, 6),
+                "horizon_steps": horizon_steps,
+            },
+        },
+        "equilibrium_distribution": {
+            "method": "stationary_distribution",
+            "formula": equilibrium_meta.get("formula", "π = πP"),
+            "description": (
+                "Long-run equilibrium (stationary) distribution of return bins — "
+                "where the chain settles if history were infinitely long."
+            ),
+            "inputs": {
+                "iterations": equilibrium_meta.get("iterations"),
+                "converged": equilibrium_meta.get("converged"),
+                "tolerance": equilibrium_meta.get("tolerance"),
+            },
+        },
+        "equilibrium_positive_probability": {
+            "method": "stationary_distribution",
+            "formula": "Σ π_equilibrium(state) for bins with lower bound ≥ 0%",
+            "description": "Equilibrium probability mass on non-negative return bins.",
+            "inputs": {"iterations": equilibrium_meta.get("iterations")},
+        },
+        "confidence": {
+            "method": "markov_chain_next_day",
+            "formula": "max P(next_state | context)",
+            "description": "Probability of the most likely next-day return bin.",
+            "inputs": {
+                "predicted_state": predicted_state,
+                "confidence": round(confidence, 6),
+            },
+        },
+    }
 
 
 def _positive_probability(
@@ -303,19 +452,83 @@ def run_prediction_from_closes(
     last_close = float(close_prices[-1])
     estimated_next_close = last_close * (1.0 + expected_return_next_day)
 
-    dist = _simulate_horizon_distribution(
-        history=recent_context,
-        state_labels=state_labels,
-        chain_levels=chain_levels,
-        context_len=context_len,
-        horizon_steps=steps,
-    )
+    first_order_matrix = build_empirical_transition_matrix(states, state_labels)
+    current_state_idx = state_labels.index(recent_context[-1])
+    dist = _project_horizon_distribution(current_state_idx, first_order_matrix, steps)
+    equilibrium, equilibrium_meta = _compute_equilibrium_distribution(first_order_matrix)
+
     next_pos_prob = _positive_probability(row, state_labels, DEFAULT_BIN_EDGES)
     horizon_pos_prob = _positive_probability(dist, state_labels, DEFAULT_BIN_EDGES)
-    first_order_matrix = build_empirical_transition_matrix(states, state_labels)
+    equilibrium_pos_prob = _positive_probability(equilibrium, state_labels, DEFAULT_BIN_EDGES)
+
+    expected_return_horizon = float(
+        sum(float(dist[j]) * state_mean_returns[state] for j, state in enumerate(state_labels))
+    )
+    estimated_close_horizon = last_close * (1.0 + expected_return_horizon)
+
+    calculation_sources = _build_calculation_sources(
+        last_close=last_close,
+        expected_return_next_day=expected_return_next_day,
+        estimated_next_close=estimated_next_close,
+        current_state=recent_context[-1],
+        current_state_idx=current_state_idx,
+        predicted_state=state_labels[next_idx],
+        confidence=confidence,
+        next_pos_prob=next_pos_prob,
+        horizon_steps=steps,
+        horizon_pos_prob=horizon_pos_prob,
+        expected_return_horizon=expected_return_horizon,
+        estimated_close_horizon=estimated_close_horizon,
+        equilibrium_meta=equilibrium_meta,
+        equilibrium_pos_prob=equilibrium_pos_prob,
+        context_len=context_len,
+        recent_context=recent_context,
+    )
+    for i, label in enumerate(state_labels):
+        calculation_sources[f"next_state_prob__{i}"] = {
+            "method": "markov_chain_next_day",
+            "formula": "P(next_state = bin | context)",
+            "description": f"Next-day probability for return bin: {label}.",
+            "inputs": {
+                "state": label,
+                "probability": round(float(row[i]), 6),
+                "context": recent_context,
+            },
+        }
+        calculation_sources[f"next_contribution__{i}"] = {
+            "method": "markov_chain_next_day",
+            "formula": "P(next_state) × mean_return(state)",
+            "description": f"Expected return contribution from bin: {label}.",
+            "inputs": {
+                "state": label,
+                "probability": round(float(row[i]), 6),
+                "mean_return": round(state_mean_returns[label], 6),
+                "contribution": round(float(row[i]) * state_mean_returns[label], 6),
+            },
+        }
+        calculation_sources[f"horizon_state_prob__{i}"] = {
+            "method": "markov_chain_matrix_power",
+            "formula": f"(one_hot(current) @ P^{steps})[bin]",
+            "description": f"Horizon probability for return bin: {label}.",
+            "inputs": {
+                "state": label,
+                "probability": round(float(dist[i]), 6),
+                "horizon_steps": steps,
+            },
+        }
+        calculation_sources[f"equilibrium_state_prob__{i}"] = {
+            "method": "stationary_distribution",
+            "formula": "π_equilibrium[state] where π = πP",
+            "description": f"Equilibrium probability for return bin: {label}.",
+            "inputs": {
+                "state": label,
+                "probability": round(float(equilibrium[i]), 6),
+                "iterations": equilibrium_meta.get("iterations"),
+            },
+        }
 
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "model": "empirical_binned_returns_variable_order_markov",
         "symbol": _normalize_symbol(symbol),
         "period": period,
@@ -343,6 +556,12 @@ def run_prediction_from_closes(
         "horizon_steps": steps,
         "distribution_after_horizon": _distribution_dict(dist, state_labels),
         "horizon_positive_probability": round(horizon_pos_prob, 6),
+        "expected_return_horizon": round(expected_return_horizon, 6),
+        "estimated_close_horizon": round(estimated_close_horizon, 6),
+        "equilibrium_distribution": _distribution_dict(equilibrium, state_labels),
+        "equilibrium_positive_probability": round(equilibrium_pos_prob, 6),
+        "equilibrium_meta": equilibrium_meta,
+        "calculation_sources": calculation_sources,
         "first_order_transition_matrix": _matrix_to_nested_dict(first_order_matrix, state_labels),
     }
 
@@ -357,7 +576,8 @@ def run_prediction(
     Build a variable-order Markov chain from binned daily returns (yfinance), then:
     - current_context: last `context_len` discretized return states (default = 5 trading days)
     - next_state_probabilities: probability over return-range scenarios for the next day
-    - distribution_after_horizon: multi-step state distribution via Monte Carlo simulation
+    - distribution_after_horizon: multi-step state distribution via P^steps (deterministic)
+    - equilibrium_distribution: stationary distribution π = πP (power iteration)
     """
     close_prices = _price_history(symbol, period)
     current_price = _current_price(symbol)

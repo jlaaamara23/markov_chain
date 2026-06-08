@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { TABLE_COLUMN_SOURCES, pickSource } from '../utils/calculationSources'
 import RecommendationBadge from './RecommendationBadge'
 import RiskBadge from './RiskBadge'
+import TraceableValue from './TraceableValue'
 
 function formatNumber(value, digits = 2) {
   if (!Number.isFinite(Number(value))) return '—'
@@ -148,23 +150,55 @@ function AnalysisTable({ rows, selectedSymbol, onSelect, horizonSteps }) {
                   <RiskBadge level={row.scoring?.risk_level} />
                 </td>
                 <td className="td-right">
-                  <strong>{formatNumber(row.scoring?.profit_score, 1)}</strong>
+                  <strong>
+                    <TraceableValue
+                      value={formatNumber(row.scoring?.profit_score, 1)}
+                      source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.profit_score)}
+                    />
+                  </strong>
                 </td>
-                <td className="td-right">{formatNumber(row.last_close, 2)}</td>
+                <td className="td-right">
+                  <TraceableValue
+                    value={formatNumber(row.last_close, 2)}
+                    source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.last_close)}
+                  />
+                </td>
                 <td className={`td-right ${change >= 0 ? 'text-up' : 'text-down'}`}>
-                  {Number.isFinite(change) ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '—'}
+                  <TraceableValue
+                    value={
+                      Number.isFinite(change)
+                        ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`
+                        : '—'
+                    }
+                    source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.change_percent)}
+                  />
                 </td>
                 <td className="td-right">
-                  {formatPercent(row.indicators?.stdev_annualized, 2)}
+                  <TraceableValue
+                    value={formatPercent(row.indicators?.stdev_annualized, 2)}
+                    source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.stdev)}
+                  />
                 </td>
                 <td className="td-right">
-                  {formatNumber(row.indicators?.rsi_14, 1)}
+                  <TraceableValue
+                    value={formatNumber(row.indicators?.rsi_14, 1)}
+                    source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.rsi)}
+                  />
                 </td>
                 <td className={`td-right ${momentum >= 0 ? 'text-up' : 'text-down'}`}>
-                  {formatSignedPercent(row.indicators?.momentum_20d, 2)}
+                  <TraceableValue
+                    value={formatSignedPercent(row.indicators?.momentum_20d, 2)}
+                    source={pickSource(row.calculation_sources, TABLE_COLUMN_SOURCES.momentum_20d)}
+                  />
                 </td>
                 <td className="td-right">
-                  {formatPercent(row.markov?.horizon_positive_probability, 1)}
+                  <TraceableValue
+                    value={formatPercent(row.markov?.horizon_positive_probability, 1)}
+                    source={pickSource(
+                      row.calculation_sources,
+                      TABLE_COLUMN_SOURCES.horizon_positive,
+                    )}
+                  />
                 </td>
               </tr>
             )

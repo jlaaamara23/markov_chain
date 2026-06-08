@@ -6,6 +6,7 @@ import PriceHistoryChart from '../components/PriceHistoryChart'
 import RecommendationBadge from '../components/RecommendationBadge'
 import RiskBadge from '../components/RiskBadge'
 import StatCard from '../components/StatCard'
+import TraceableValue from '../components/TraceableValue'
 
 const ANALYZE_SCHEMA = 1
 const RISK_FILTERS = [
@@ -174,9 +175,9 @@ function DashboardPage() {
     <section className="page">
       <h1 className="page-title">Investment analysis</h1>
       <p className="muted dashboard-lead">
-        Combines technical indicators (stdev, moving averages, RSI, momentum, volume) with the
-        Markov chain to produce a profit-potential score, a risk level, and a recommendation per
-        ticker. Higher score = stronger forward setup.
+        Stock price forecasts use a pure Markov chain only (no Monte Carlo, no MA20/MA50 in
+        predictions). Tap any underlined number anywhere on this page to see its equation and
+        inputs. Profit score is Markov-based; technical indicators are for context only.
       </p>
 
       <div className="card dashboard-controls">
@@ -373,6 +374,8 @@ function SelectedTickerDetail({ row }) {
   const change = Number(change_percent ?? 0)
   const priceText = `${formatNumber(current_price ?? last_close, 2)}${currency ? ` ${currency}` : ''}`
   const trendDir = ind.trend_direction ?? 'sideways'
+  const sources = row.calculation_sources ?? detail?.calculation_sources ?? {}
+  const horizonN = detail?.horizon_steps ?? mk.horizon_steps ?? '?'
 
   return (
     <>
@@ -383,10 +386,17 @@ function SelectedTickerDetail({ row }) {
               {symbol} <span className="selected-summary__name">{name ?? ''}</span>
             </h2>
             <p className="muted small-print">
-              {priceText} · last close {formatNumber(last_close, 2)} · change{' '}
+              {priceText} · last close{' '}
+              <TraceableValue
+                value={formatNumber(last_close, 2)}
+                source={sources.last_close}
+              />{' '}
+              · change{' '}
               <span className={change >= 0 ? 'text-up' : 'text-down'}>
-                {change >= 0 ? '+' : ''}
-                {change.toFixed(2)}%
+                <TraceableValue
+                  value={`${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
+                  source={sources.change_percent}
+                />
               </span>
             </p>
           </div>
@@ -404,16 +414,73 @@ function SelectedTickerDetail({ row }) {
         fallbackLastClose={last_close}
       />
 
+      <h2 className="subsection-title">Markov chain predictions</h2>
+      <p className="muted small-print">
+        Tap any underlined number on this page to see its equation, method, and inputs.
+      </p>
       <div className="card-grid">
         <StatCard
-          label="Profit score"
+          label="Profit score (Markov)"
           value={`${formatNumber(scoring.profit_score, 1)} / 100`}
           accent={scoring.recommendation_color}
-          hint="Weighted blend of momentum, trend, RSI, volume, Markov P(+), volatility penalty."
+          source={sources.profit_score}
+          hint="Weighted Markov probabilities only: horizon P(+), next-day P(+), equilibrium P(+), confidence."
         />
+        <StatCard
+          label="Estimated next close"
+          value={formatNumber(mk.estimated_next_close, 2)}
+          source={sources.estimated_next_close}
+          hint={`Expected next-day return: ${formatSignedPercent(mk.expected_return_next_day, 3)}`}
+        />
+        <StatCard
+          label={`Estimated close in ${horizonN}d`}
+          value={formatNumber(mk.estimated_close_horizon, 2)}
+          source={sources.estimated_close_horizon}
+          hint={`Horizon return: ${formatSignedPercent(mk.expected_return_horizon, 3)} via P^${horizonN}`}
+        />
+        <StatCard
+          label={`P(positive in ${horizonN}d)`}
+          value={formatPercent(mk.horizon_positive_probability, 1)}
+          source={sources.horizon_positive_probability}
+          hint={
+            <>
+              Next-day P(+):{' '}
+              <TraceableValue
+                value={formatPercent(mk.next_positive_probability, 1)}
+                source={sources.next_positive_probability}
+              />
+            </>
+          }
+        />
+        <StatCard
+          label="Equilibrium P(+)"
+          value={formatPercent(mk.equilibrium_positive_probability, 1)}
+          source={sources.equilibrium_positive_probability}
+          hint="Long-run stationary distribution π = πP (power iteration)."
+        />
+        <StatCard
+          label="Predicted next state"
+          value={mk.predicted_state ?? '—'}
+          source={sources.predicted_state}
+          hint={
+            <>
+              Confidence:{' '}
+              <TraceableValue
+                value={formatPercent(mk.confidence, 1)}
+                source={sources.confidence}
+              />{' '}
+              · current: {mk.current_state ?? '—'}
+            </>
+          }
+        />
+      </div>
+
+      <h2 className="subsection-title">Technical context (not used in predictions)</h2>
+      <div className="card-grid">
         <StatCard
           label="Volatility score"
           value={`${formatNumber(ind.volatility_score, 1)} / 100`}
+          source={sources.volatility_score}
           hint={
             (ind.volatility_score ?? 0) < 30
               ? 'Low standard deviation — relatively stable stock.'
@@ -425,37 +492,74 @@ function SelectedTickerDetail({ row }) {
         <StatCard
           label="Stdev (annualized)"
           value={formatPercent(ind.stdev_annualized, 2)}
-          hint={`Daily stdev: ${formatPercent(ind.stdev_daily, 3)}`}
+          source={sources.stdev_annualized}
+          hint={
+            <>
+              Daily stdev:{' '}
+              <TraceableValue
+                value={formatPercent(ind.stdev_daily, 3)}
+                source={sources.stdev_daily}
+              />
+            </>
+          }
         />
         <StatCard
           label="RSI(14)"
           value={formatNumber(ind.rsi_14, 1)}
+          source={sources.rsi_14}
           hint={rsiHint(ind.rsi_14)}
         />
         <StatCard
           label="Moving averages"
-          value={`MA20 ${formatNumber(ind.ma_20, 2)} · MA50 ${formatNumber(ind.ma_50, 2)}`}
-          hint={trendCopy(trendDir)}
+          value={
+            <>
+              MA20{' '}
+              <TraceableValue
+                value={formatNumber(ind.ma_20, 2)}
+                source={sources.ma_20}
+              />{' '}
+              · MA50{' '}
+              <TraceableValue
+                value={formatNumber(ind.ma_50, 2)}
+                source={sources.ma_50}
+              />
+            </>
+          }
+          hint={
+            <TraceableValue value={trendCopy(trendDir)} source={sources.trend_direction} />
+          }
         />
         <StatCard
           label="Momentum"
-          value={`20d ${formatSignedPercent(ind.momentum_20d, 2)} · 60d ${formatSignedPercent(ind.momentum_60d, 2)}`}
-          hint={`Period growth: ${formatSignedPercent(ind.historical_growth, 2)}`}
+          value={
+            <>
+              20d{' '}
+              <TraceableValue
+                value={formatSignedPercent(ind.momentum_20d, 2)}
+                source={sources.momentum_20d}
+              />{' '}
+              · 60d{' '}
+              <TraceableValue
+                value={formatSignedPercent(ind.momentum_60d, 2)}
+                source={sources.momentum_60d}
+              />
+            </>
+          }
+          hint={
+            <>
+              Period growth:{' '}
+              <TraceableValue
+                value={formatSignedPercent(ind.historical_growth, 2)}
+                source={sources.historical_growth}
+              />
+            </>
+          }
         />
         <StatCard
           label="Volume change"
           value={formatSignedPercent(ind.volume_change, 1)}
+          source={sources.volume_change}
           hint="Last 5 sessions vs prior 20-session baseline."
-        />
-        <StatCard
-          label={`P(positive in ${detail?.horizon_steps ?? mk.horizon_steps ?? '?'}d)`}
-          value={formatPercent(mk.horizon_positive_probability, 1)}
-          hint={`Next-day P(+): ${formatPercent(mk.next_positive_probability, 1)}`}
-        />
-        <StatCard
-          label="Estimated next close"
-          value={formatNumber(mk.estimated_next_close, 2)}
-          hint={`Markov expected next-day return: ${formatSignedPercent(mk.expected_return_next_day, 3)}`}
         />
       </div>
 
@@ -468,7 +572,13 @@ function SelectedTickerDetail({ row }) {
                 {name.replace(/_/g, ' ')}
                 <small className="muted"> (weight {(info.weight * 100).toFixed(0)}%)</small>
               </span>
-              <span>+{Number(info.contribution ?? 0).toFixed(2)}</span>
+              <span>
+                +
+                <TraceableValue
+                  value={Number(info.contribution ?? 0).toFixed(2)}
+                  source={sources[`score_breakdown__${name}`]}
+                />
+              </span>
             </li>
           ))}
         </ul>
@@ -477,47 +587,97 @@ function SelectedTickerDetail({ row }) {
       {detail && (
         <>
           <div className="card">
-            <h2 className="subsection-title">Next-day Markov probabilities</h2>
+            <h2 className="subsection-title markov-section-title">
+              Next-day Markov probabilities
+            </h2>
             <ul className="prob-list">
-              {Object.entries(detail.next_state_probabilities || {}).map(([k, v]) => {
+              {Object.entries(detail.next_state_probabilities || {}).map(([k, v], idx) => {
                 const contribution = Number(detail.next_state_expected_contributions?.[k] ?? 0)
                 return (
                   <li key={k}>
                     <span>
                       {k}
                       <small className="muted">
-                        {' '}(expected contribution: {(contribution * 100).toFixed(3)}%)
+                        {' '}
+                        (expected contribution:{' '}
+                        <TraceableValue
+                          value={`${(contribution * 100).toFixed(3)}%`}
+                          source={sources[`next_contribution__${idx}`]}
+                        />
+                        )
                       </small>
                     </span>
-                    <span>{(Number(v) * 100).toFixed(2)}%</span>
+                    <span>
+                      <TraceableValue
+                        value={`${(Number(v) * 100).toFixed(2)}%`}
+                        source={sources[`next_state_prob__${idx}`]}
+                      />
+                    </span>
                   </li>
                 )
               })}
             </ul>
             <p className="muted small-print">
               Total expected next-day return:{' '}
-              {(Number(detail.expected_return_next_day ?? 0) * 100).toFixed(3)}%
+              <TraceableValue
+                value={`${(Number(detail.expected_return_next_day ?? 0) * 100).toFixed(3)}%`}
+                source={sources.expected_return_next_day}
+              />
             </p>
           </div>
 
           <div className="card">
-            <h2 className="subsection-title">
-              After {detail.horizon_steps} day{detail.horizon_steps === 1 ? '' : 's'} (Monte Carlo)
+            <h2 className="subsection-title markov-section-title">
+              After {detail.horizon_steps} day{detail.horizon_steps === 1 ? '' : 's'} (P
+              <sup>{detail.horizon_steps}</sup>)
             </h2>
             <ul className="prob-list">
-              {Object.entries(detail.distribution_after_horizon || {}).map(([k, v]) => (
+              {Object.entries(detail.distribution_after_horizon || {}).map(([k, v], idx) => (
                 <li key={k}>
                   <span>{k}</span>
-                  <span>{(Number(v) * 100).toFixed(2)}%</span>
+                  <span>
+                    <TraceableValue
+                      value={`${(Number(v) * 100).toFixed(2)}%`}
+                      source={sources[`horizon_state_prob__${idx}`] ?? sources.distribution_after_horizon}
+                    />
+                  </span>
                 </li>
               ))}
             </ul>
           </div>
 
+          <div className="card">
+            <h2 className="subsection-title markov-section-title">
+              Equilibrium distribution (π = πP)
+            </h2>
+            <ul className="prob-list">
+              {Object.entries(detail.equilibrium_distribution || {}).map(([k, v], idx) => (
+                <li key={k}>
+                  <span>{k}</span>
+                  <span>
+                    <TraceableValue
+                      value={`${(Number(v) * 100).toFixed(2)}%`}
+                      source={
+                        sources[`equilibrium_state_prob__${idx}`] ?? sources.equilibrium_distribution
+                      }
+                    />
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {detail.equilibrium_meta && (
+              <p className="muted small-print">
+                Power iteration: {detail.equilibrium_meta.iterations} steps
+                {detail.equilibrium_meta.converged ? ' (converged)' : ' (max iterations)'}.
+              </p>
+            )}
+          </div>
+
           <div className="card muted-card">
             <p className="muted small-print">
               Model: {detail.model ?? 'empirical'} · Data: {detail.return_observations} return days ·
-              Context: last {detail.context_len} day(s). Matrix uses Laplace smoothing + backoff.
+              Context: last {detail.context_len} day(s). Next-day uses variable-order backoff;
+              horizon uses deterministic P<sup>n</sup> (no random simulation).
             </p>
           </div>
         </>

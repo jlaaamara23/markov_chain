@@ -1161,3 +1161,73 @@
     font-size: 0.8rem;
   }
 }
+
+/* ---------- Traceable Markov numbers ---------- */
+
+.traceable-wrap {
+  display: inline;
+}
+
+.traceable-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  font-variant-numeric: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted rgba(162, 187, 255, 0.55);
+  text-underline-offset: 0.2em;
+}
+
+.traceable-value:hover {
+  color: #a8c4ff;
+}
+
+.traceable-value__icon {
+  font-size: 0.75em;
+  opacity: 0.75;
+}
+
+.traceable-source {
+  margin-top: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 0.65rem;
+  border: 1px solid rgba(145, 170, 224, 0.35);
+  background: rgba(10, 16, 28, 0.65);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.traceable-source p {
+  margin: 0 0 0.45rem;
+}
+
+.traceable-source__inputs-title {
+  margin-top: 0.35rem !important;
+}
+
+.traceable-source__inputs {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.traceable-source__inputs li {
+  margin-bottom: 0.2rem;
+}
+
+.prob-list .traceable-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.markov-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

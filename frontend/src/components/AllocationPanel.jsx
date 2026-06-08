@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { ALLOCATION_SOURCES, pickSource } from '../utils/calculationSources'
 import RecommendationBadge from './RecommendationBadge'
 import RiskBadge from './RiskBadge'
+import TraceableValue from './TraceableValue'
 import { computeAllocation } from '../utils/allocation'
 
 function formatMoney(value, currency = 'USD') {
@@ -76,21 +78,47 @@ function TopPickCallout({ topPick, amount, currency }) {
       <dl className="top-pick-card__stats">
         <div>
           <dt>Profit score</dt>
-          <dd>{score.toFixed(1)} / 100</dd>
+          <dd>
+            <TraceableValue
+              value={`${score.toFixed(1)} / 100`}
+              source={pickSource(topPick.calculation_sources, 'profit_score')}
+            />
+          </dd>
         </div>
         <div>
           <dt>Markov expected next day</dt>
           <dd className={expectedNext >= 0 ? 'text-up' : 'text-down'}>
-            {formatSignedPercent(expectedNext, 3)}
+            <TraceableValue
+              value={formatSignedPercent(expectedNext, 3)}
+              source={pickSource(
+                topPick.calculation_sources,
+                'expected_return_next_day',
+                ALLOCATION_SOURCES.top_pick_expected_next_day,
+              )}
+            />
           </dd>
         </div>
         <div>
           <dt>P(positive in {horizonSteps}d)</dt>
-          <dd>{formatPercent(horizonProb, 1)}</dd>
+          <dd>
+            <TraceableValue
+              value={formatPercent(horizonProb, 1)}
+              source={pickSource(
+                topPick.calculation_sources,
+                'horizon_positive_probability',
+                ALLOCATION_SOURCES.top_pick_horizon_positive,
+              )}
+            />
+          </dd>
         </div>
         <div>
           <dt>Last close</dt>
-          <dd>{formatMoney(lastClose, currency)}</dd>
+          <dd>
+            <TraceableValue
+              value={formatMoney(lastClose, currency)}
+              source={pickSource(topPick.calculation_sources, 'last_close')}
+            />
+          </dd>
         </div>
       </dl>
 
@@ -98,11 +126,37 @@ function TopPickCallout({ topPick, amount, currency }) {
         <div className="top-pick-card__what-if">
           <p className="muted small-print">
             <strong>If you put all {formatMoney(validAmount, currency)} here:</strong>{' '}
-            ≈ {sharesIfAllIn.toFixed(2)} shares · estimated next-day value{' '}
-            {formatMoney(expectedNextValue, currency)}{' '}
+            ≈{' '}
+            <TraceableValue
+              value={`${sharesIfAllIn.toFixed(2)} shares`}
+              source={{
+                ...ALLOCATION_SOURCES.shares_estimated,
+                inputs: { allocation_dollars: validAmount, last_close: lastClose },
+              }}
+            />{' '}
+            · estimated next-day value{' '}
+            <TraceableValue
+              value={formatMoney(expectedNextValue, currency)}
+              source={{
+                ...ALLOCATION_SOURCES.top_pick_what_if_value,
+                inputs: {
+                  invest_amount: validAmount,
+                  expected_return_next_day: expectedNext,
+                },
+              }}
+            />{' '}
             <span className={expectedGain >= 0 ? 'text-up' : 'text-down'}>
-              ({expectedGain >= 0 ? '+' : ''}
-              {formatMoney(expectedGain, currency)})
+              (
+              <TraceableValue
+                value={`${expectedGain >= 0 ? '+' : ''}${formatMoney(expectedGain, currency)}`}
+                source={{
+                  method: 'markov_chain_next_day',
+                  formula: 'invest_amount × expected_return_next_day',
+                  description: 'Expected dollar gain/loss on the next day from the Markov forecast.',
+                  inputs: { invest_amount: validAmount, expected_return_next_day: expectedNext },
+                }}
+              />
+              )
             </span>
           </p>
         </div>
@@ -122,13 +176,29 @@ function BucketHeader({ bucket, currency }) {
         <div>
           <span className="bucket-header__stat-label">Target</span>
           <span className="bucket-header__stat-value">
-            {(bucket.weight * 100).toFixed(0)}%
+            <TraceableValue
+              value={`${(bucket.weight * 100).toFixed(0)}%`}
+              source={{
+                ...ALLOCATION_SOURCES.bucket_target_weight,
+                inputs: { bucket: bucket.id, nominal_weight: bucket.weight },
+              }}
+            />
           </span>
         </div>
         <div>
           <span className="bucket-header__stat-label">Allocated</span>
           <span className="bucket-header__stat-value">
-            {formatMoney(bucket.amount, currency)}
+            <TraceableValue
+              value={formatMoney(bucket.amount, currency)}
+              source={{
+                ...ALLOCATION_SOURCES.bucket_allocated_amount,
+                inputs: {
+                  bucket: bucket.id,
+                  effective_weight: bucket.effectiveWeight,
+                  amount: bucket.amount,
+                },
+              }}
+            />
           </span>
         </div>
       </div>
@@ -234,7 +304,17 @@ function AllocationPanel({ results }) {
             </h2>
             {allocation.cashRemaining > 0 && (
               <p className="muted small-print">
-                Cash remaining: {formatMoney(allocation.cashRemaining, currency)}
+                Cash remaining:{' '}
+                <TraceableValue
+                  value={formatMoney(allocation.cashRemaining, currency)}
+                  source={{
+                    method: 'rounding_remainder',
+                    formula: 'total_invest − Σ rounded_stock_allocations',
+                    description:
+                      'Leftover cash from cent rounding; added to the highest-score stock when possible.',
+                    inputs: { cash_remaining: allocation.cashRemaining },
+                  }}
+                />
               </p>
             )}
           </div>
@@ -280,17 +360,54 @@ function AllocationPanel({ results }) {
                             <td>
                               <RiskBadge level={a.riskLevel} />
                             </td>
-                            <td className="td-right">{a.profitScore.toFixed(1)}</td>
                             <td className="td-right">
-                              <strong>{formatMoney(a.amount, currency)}</strong>
+                              <TraceableValue
+                                value={a.profitScore.toFixed(1)}
+                                source={pickSource(
+                                  results.find((r) => r.symbol === a.symbol)?.calculation_sources,
+                                  'profit_score',
+                                )}
+                              />
                             </td>
                             <td className="td-right">
-                              {(a.percent * 100).toFixed(2)}%
+                              <strong>
+                                <TraceableValue
+                                  value={formatMoney(a.amount, currency)}
+                                  source={{
+                                    ...ALLOCATION_SOURCES.stock_allocation_amount,
+                                    inputs: {
+                                      symbol: a.symbol,
+                                      bucket: a.bucket,
+                                      profit_score: a.profitScore,
+                                      amount: a.amount,
+                                    },
+                                  }}
+                                />
+                              </strong>
                             </td>
                             <td className="td-right">
-                              {a.sharesEstimated > 0
-                                ? a.sharesEstimated.toFixed(2)
-                                : '—'}
+                              <TraceableValue
+                                value={`${(a.percent * 100).toFixed(2)}%`}
+                                source={{
+                                  ...ALLOCATION_SOURCES.stock_percent_of_total,
+                                  inputs: { symbol: a.symbol, percent: a.percent },
+                                }}
+                              />
+                            </td>
+                            <td className="td-right">
+                              <TraceableValue
+                                value={
+                                  a.sharesEstimated > 0 ? a.sharesEstimated.toFixed(2) : '—'
+                                }
+                                source={{
+                                  ...ALLOCATION_SOURCES.shares_estimated,
+                                  inputs: {
+                                    symbol: a.symbol,
+                                    allocation: a.amount,
+                                    last_close: a.lastClose,
+                                  },
+                                }}
+                              />
                             </td>
                           </tr>
                         ))}

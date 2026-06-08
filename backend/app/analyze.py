@@ -15,6 +15,7 @@ import numpy as np
 from app.indicators import compute_all_indicators
 from app.markov import _current_price, run_prediction_from_closes
 from app.scoring import score_stock
+from app.sources import build_indicator_sources, build_scoring_sources, merge_calculation_sources
 from app.ticker_util import normalize_equity_symbol
 
 ANALYZE_SCHEMA_VERSION = 1
@@ -101,11 +102,14 @@ def analyze_symbol(
     markov_summary = {
         "next_positive_probability": markov_full["next_positive_probability"],
         "horizon_positive_probability": markov_full["horizon_positive_probability"],
+        "equilibrium_positive_probability": markov_full["equilibrium_positive_probability"],
         "predicted_state": markov_full["predicted_state"],
         "current_state": markov_full["current_state"],
         "confidence": markov_full["confidence"],
         "expected_return_next_day": markov_full["expected_return_next_day"],
         "estimated_next_close": markov_full["estimated_next_close"],
+        "expected_return_horizon": markov_full["expected_return_horizon"],
+        "estimated_close_horizon": markov_full["estimated_close_horizon"],
         "horizon_steps": markov_full["horizon_steps"],
         "context_len": markov_full["context_len"],
     }
@@ -114,6 +118,17 @@ def analyze_symbol(
 
     change_amount = last_close - previous_close
     change_percent = (change_amount / previous_close * 100.0) if previous_close else 0.0
+
+    calculation_sources = merge_calculation_sources(
+        markov_full.get("calculation_sources", {}),
+        build_indicator_sources(
+            indicators,
+            last_close=last_close,
+            previous_close=previous_close,
+        ),
+        build_scoring_sources(scoring, markov_summary),
+    )
+    markov_full = {**markov_full, "calculation_sources": calculation_sources}
 
     return {
         "symbol": sym,
@@ -129,6 +144,7 @@ def analyze_symbol(
         "markov": markov_summary,
         "markov_detail": markov_full,
         "scoring": scoring,
+        "calculation_sources": calculation_sources,
     }
 
 
