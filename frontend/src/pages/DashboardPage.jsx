@@ -424,7 +424,7 @@ function SelectedTickerDetail({ row }) {
           value={`${formatNumber(scoring.profit_score, 1)} / 100`}
           accent={scoring.recommendation_color}
           source={sources.profit_score}
-          hint="Weighted Markov probabilities only: horizon P(+), next-day P(+), equilibrium P(+), confidence."
+          hint="Markov only: expected returns (5d horizon, next day, equilibrium) + P(+) + confidence."
         />
         <StatCard
           label="Estimated next close"
@@ -648,8 +648,14 @@ function SelectedTickerDetail({ row }) {
 
           <div className="card">
             <h2 className="subsection-title markov-section-title">
-              Equilibrium distribution (π = πP)
+              Equilibrium distribution (π = πP) — uniform {detail.return_period_days ?? 5}d bins
             </h2>
+            {detail.bin_min_percent != null && detail.bin_max_percent != null && (
+              <p className="muted small-print">
+                Range: {Number(detail.bin_min_percent).toFixed(2)}% to{' '}
+                {Number(detail.bin_max_percent).toFixed(2)}% (data min/max, equal width, no ±inf).
+              </p>
+            )}
             <ul className="prob-list">
               {Object.entries(detail.equilibrium_distribution || {}).map(([k, v], idx) => (
                 <li key={k}>

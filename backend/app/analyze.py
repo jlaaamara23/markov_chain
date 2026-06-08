@@ -103,6 +103,7 @@ def analyze_symbol(
         "next_positive_probability": markov_full["next_positive_probability"],
         "horizon_positive_probability": markov_full["horizon_positive_probability"],
         "equilibrium_positive_probability": markov_full["equilibrium_positive_probability"],
+        "equilibrium_expected_return": markov_full["equilibrium_expected_return"],
         "predicted_state": markov_full["predicted_state"],
         "current_state": markov_full["current_state"],
         "confidence": markov_full["confidence"],

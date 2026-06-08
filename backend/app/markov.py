@@ -13,19 +13,9 @@ import numpy as np
 
 from app.ticker_util import normalize_equity_symbol
 
-# Return bins in decimal form:
-# e.g. 0.005 = +0.50%
-DEFAULT_BIN_EDGES: tuple[float, ...] = (
-    -0.03,
-    -0.015,
-    -0.0075,
-    -0.003,
-    -0.001,
-    0.001,
-    0.005,
-    0.01,
-    0.02,
-)
+# Uniform bins over observed returns; bounds use data min/max (no ±inf).
+NUM_RETURN_BINS = 10
+RETURN_PERIOD_DAYS = 5
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -98,24 +88,60 @@ def _daily_simple_returns(symbol: str, period: str) -> np.ndarray:
     return ret
 
 
-def _build_bin_labels(edges: tuple[float, ...]) -> list[str]:
-    bounds = [-math.inf, *edges, math.inf]
+def _period_returns(close: np.ndarray, period: int = RETURN_PERIOD_DAYS) -> np.ndarray:
+    """Rolling N-day simple returns aligned to each trading day."""
+    if period <= 0 or close.size <= period:
+        raise ValueError(f"Need more than {period} close prices for {period}-day returns")
+    return close[period:] / close[:-period] - 1.0
+
+
+def _build_uniform_bin_edges(
+    returns: np.ndarray, n_bins: int = NUM_RETURN_BINS
+) -> tuple[tuple[float, ...], float, float]:
+    """Equal-width bins from observed min to max (no infinity tails)."""
+    r_min = float(np.min(returns))
+    r_max = float(np.max(returns))
+    if r_min == r_max:
+        r_min -= 0.001
+        r_max += 0.001
+    step = (r_max - r_min) / n_bins
+    edges = tuple(r_min + step * i for i in range(1, n_bins))
+    return edges, r_min, r_max
+
+
+def _build_uniform_bin_labels(
+    edges: tuple[float, ...], r_min: float, r_max: float
+) -> list[str]:
+    bounds = [r_min, *edges, r_max]
     labels: list[str] = []
     for lo, hi in zip(bounds[:-1], bounds[1:]):
-        lo_txt = "-inf" if not math.isfinite(lo) else f"{lo * 100:.2f}%"
-        hi_txt = "inf" if not math.isfinite(hi) else f"{hi * 100:.2f}%"
-        labels.append(f"{lo_txt} to {hi_txt}")
+        labels.append(f"{lo * 100:.2f}% to {hi * 100:.2f}%")
     return labels
 
 
 def _returns_to_binned_states(
-    returns: np.ndarray, edges: tuple[float, ...], labels: list[str]
+    returns: np.ndarray,
+    edges: tuple[float, ...],
+    labels: list[str],
+    r_min: float,
+    r_max: float,
 ) -> list[str]:
     states: list[str] = []
+    n_bins = len(labels)
     for r in returns:
-        idx = int(np.searchsorted(edges, float(r), side="right"))
+        val = float(r)
+        if val <= r_min:
+            idx = 0
+        elif val >= r_max:
+            idx = n_bins - 1
+        else:
+            idx = int(np.searchsorted(edges, val, side="right"))
         states.append(labels[idx])
     return states
+
+
+def _bin_lower_bounds(r_min: float, edges: tuple[float, ...]) -> list[float]:
+    return [r_min, *list(edges)]
 
 
 def _distribution_dict(vec: np.ndarray, state_labels: list[str]) -> dict[str, float]:
@@ -270,8 +296,13 @@ def _build_calculation_sources(
     estimated_close_horizon: float,
     equilibrium_meta: dict[str, Any],
     equilibrium_pos_prob: float,
+    equilibrium_expected_return: float,
     context_len: int,
     recent_context: list[str],
+    return_period: int,
+    r_min: float,
+    r_max: float,
+    n_bins: int,
 ) -> dict[str, dict[str, Any]]:
     """Provenance for UI: tap a number to see how it was derived."""
     return {
@@ -357,13 +388,26 @@ def _build_calculation_sources(
             "method": "stationary_distribution",
             "formula": equilibrium_meta.get("formula", "π = πP"),
             "description": (
-                "Long-run equilibrium (stationary) distribution of return bins — "
-                "where the chain settles if history were infinitely long."
+                f"Equilibrium over {n_bins} equal-width {return_period}-day return bins "
+                f"from {r_min * 100:.2f}% to {r_max * 100:.2f}% (data min/max, no ±inf)."
             ),
             "inputs": {
+                "return_period_days": return_period,
+                "bin_min_percent": round(r_min * 100, 4),
+                "bin_max_percent": round(r_max * 100, 4),
+                "n_bins": n_bins,
                 "iterations": equilibrium_meta.get("iterations"),
                 "converged": equilibrium_meta.get("converged"),
                 "tolerance": equilibrium_meta.get("tolerance"),
+            },
+        },
+        "equilibrium_expected_return": {
+            "method": "stationary_distribution",
+            "formula": "Σ π_equilibrium(state) × mean_return(state)",
+            "description": f"Expected {return_period}-day return implied by the equilibrium distribution.",
+            "inputs": {
+                "equilibrium_expected_return": round(equilibrium_expected_return, 6),
+                "return_period_days": return_period,
             },
         },
         "equilibrium_positive_probability": {
@@ -385,14 +429,15 @@ def _build_calculation_sources(
 
 
 def _positive_probability(
-    distribution: np.ndarray, state_labels: list[str], edges: tuple[float, ...]
+    distribution: np.ndarray,
+    r_min: float,
+    edges: tuple[float, ...],
 ) -> float:
-    # Use lower bound >= 0 to mark a "positive return" state.
-    bounds = [-math.inf, *edges, math.inf]
+    """Sum probability mass in bins whose lower bound is >= 0%."""
+    bounds = _bin_lower_bounds(r_min, edges)
     p = 0.0
-    for i in range(len(state_labels)):
-        lo = bounds[i]
-        if lo >= 0:
+    for i in range(len(distribution)):
+        if bounds[i] >= 0:
             p += float(distribution[i])
     return p
 
@@ -428,9 +473,10 @@ def run_prediction_from_closes(
     if close_prices.size < 3:
         raise ValueError(f"Not enough close observations for {_normalize_symbol(symbol)}")
 
-    returns = close_prices[1:] / close_prices[:-1] - 1.0
-    state_labels = _build_bin_labels(DEFAULT_BIN_EDGES)
-    states = _returns_to_binned_states(returns, DEFAULT_BIN_EDGES, state_labels)
+    returns = _period_returns(close_prices, RETURN_PERIOD_DAYS)
+    bin_edges, r_min, r_max = _build_uniform_bin_edges(returns, NUM_RETURN_BINS)
+    state_labels = _build_uniform_bin_labels(bin_edges, r_min, r_max)
+    states = _returns_to_binned_states(returns, bin_edges, state_labels, r_min, r_max)
     if len(states) <= context_len:
         raise ValueError("Not enough history for requested context_len")
 
@@ -457,12 +503,18 @@ def run_prediction_from_closes(
     dist = _project_horizon_distribution(current_state_idx, first_order_matrix, steps)
     equilibrium, equilibrium_meta = _compute_equilibrium_distribution(first_order_matrix)
 
-    next_pos_prob = _positive_probability(row, state_labels, DEFAULT_BIN_EDGES)
-    horizon_pos_prob = _positive_probability(dist, state_labels, DEFAULT_BIN_EDGES)
-    equilibrium_pos_prob = _positive_probability(equilibrium, state_labels, DEFAULT_BIN_EDGES)
+    next_pos_prob = _positive_probability(row, r_min, bin_edges)
+    horizon_pos_prob = _positive_probability(dist, r_min, bin_edges)
+    equilibrium_pos_prob = _positive_probability(equilibrium, r_min, bin_edges)
 
     expected_return_horizon = float(
         sum(float(dist[j]) * state_mean_returns[state] for j, state in enumerate(state_labels))
+    )
+    equilibrium_expected_return = float(
+        sum(
+            float(equilibrium[j]) * state_mean_returns[state]
+            for j, state in enumerate(state_labels)
+        )
     )
     estimated_close_horizon = last_close * (1.0 + expected_return_horizon)
 
@@ -481,8 +533,13 @@ def run_prediction_from_closes(
         estimated_close_horizon=estimated_close_horizon,
         equilibrium_meta=equilibrium_meta,
         equilibrium_pos_prob=equilibrium_pos_prob,
+        equilibrium_expected_return=equilibrium_expected_return,
         context_len=context_len,
         recent_context=recent_context,
+        return_period=RETURN_PERIOD_DAYS,
+        r_min=r_min,
+        r_max=r_max,
+        n_bins=NUM_RETURN_BINS,
     )
     for i, label in enumerate(state_labels):
         calculation_sources[f"next_state_prob__{i}"] = {
@@ -528,11 +585,15 @@ def run_prediction_from_closes(
         }
 
     return {
-        "schema_version": 4,
-        "model": "empirical_binned_returns_variable_order_markov",
+        "schema_version": 5,
+        "model": "uniform_binned_5d_returns_variable_order_markov",
         "symbol": _normalize_symbol(symbol),
         "period": period,
-        "bin_edges_percent": [round(x * 100.0, 4) for x in DEFAULT_BIN_EDGES],
+        "return_period_days": RETURN_PERIOD_DAYS,
+        "bin_min_percent": round(r_min * 100.0, 4),
+        "bin_max_percent": round(r_max * 100.0, 4),
+        "n_bins": NUM_RETURN_BINS,
+        "bin_edges_percent": [round(x * 100.0, 4) for x in bin_edges],
         "state_labels": state_labels,
         "return_observations": len(returns),
         "state_observations": len(states),
@@ -560,6 +621,7 @@ def run_prediction_from_closes(
         "estimated_close_horizon": round(estimated_close_horizon, 6),
         "equilibrium_distribution": _distribution_dict(equilibrium, state_labels),
         "equilibrium_positive_probability": round(equilibrium_pos_prob, 6),
+        "equilibrium_expected_return": round(equilibrium_expected_return, 6),
         "equilibrium_meta": equilibrium_meta,
         "calculation_sources": calculation_sources,
         "first_order_transition_matrix": _matrix_to_nested_dict(first_order_matrix, state_labels),
@@ -599,9 +661,11 @@ def render_graph_png(
     """
     Draw a simplified first-order transition graph over binned return states.
     """
-    returns = _daily_simple_returns(symbol, period)
-    state_labels = _build_bin_labels(DEFAULT_BIN_EDGES)
-    states = _returns_to_binned_states(returns, DEFAULT_BIN_EDGES, state_labels)
+    close = _price_history(symbol, period)
+    returns = _period_returns(close, RETURN_PERIOD_DAYS)
+    bin_edges, r_min, r_max = _build_uniform_bin_edges(returns, NUM_RETURN_BINS)
+    state_labels = _build_uniform_bin_labels(bin_edges, r_min, r_max)
+    states = _returns_to_binned_states(returns, bin_edges, state_labels, r_min, r_max)
     matrix = build_empirical_transition_matrix(states, state_labels)
 
     graph = nx.DiGraph()
@@ -637,7 +701,7 @@ def render_graph_png(
 
     sym = _normalize_symbol(symbol)
     ax.set_title(
-        f"Empirical Markov chain ({sym}, {period}, binned return states)\n"
+        f"Empirical Markov chain ({sym}, {period}, uniform {RETURN_PERIOD_DAYS}d return bins)\n"
         f"Edges shown if P ≥ {edge_threshold:.2f}",
         fontsize=13,
     )

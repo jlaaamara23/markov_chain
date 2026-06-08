@@ -147,7 +147,7 @@ def build_scoring_sources(
         "profit_score": _src(
             "markov_weighted_score",
             "Σ (component_value × weight) × 100",
-            "Profit score from Markov probabilities only (no MA or Monte Carlo).",
+            "Profit score from Markov expected returns and probabilities only (no MA or Monte Carlo).",
             {
                 "profit_score": scoring.get("profit_score"),
                 "weights": _WEIGHTS,
@@ -195,8 +195,11 @@ def build_scoring_sources(
                 "contribution": info.get("contribution"),
                 "raw_markov_value": markov_metrics.get(
                     {
+                        "horizon_return": "expected_return_horizon",
                         "horizon_positive": "horizon_positive_probability",
+                        "next_return": "expected_return_next_day",
                         "next_positive": "next_positive_probability",
+                        "equilibrium_return": "equilibrium_expected_return",
                         "equilibrium_positive": "equilibrium_positive_probability",
                         "confidence": "confidence",
                     }.get(name, name)
