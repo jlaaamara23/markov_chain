@@ -238,17 +238,71 @@ def _predict_next_distribution(
     raise ValueError("Unable to predict next distribution from history")
 
 
-def _project_horizon_distribution(
-    current_state_idx: int,
-    transition_matrix: np.ndarray,
+def _context_key(history: list[str], context_len: int) -> tuple[str, ...]:
+    """Suffix of length ``context_len`` — sufficient for variable-order prediction."""
+    if len(history) >= context_len:
+        return tuple(history[-context_len:])
+    return tuple(history)
+
+
+_MAX_CONTEXT_BRANCHES = 250
+_MIN_BRANCH_PROB = 1e-5
+
+
+def _prune_context_weights(weights: dict[tuple[str, ...], float]) -> dict[tuple[str, ...], float]:
+    """Keep the highest-probability context branches to avoid exponential blow-up."""
+    if len(weights) <= _MAX_CONTEXT_BRANCHES:
+        return weights
+    ranked = sorted(weights.items(), key=lambda item: item[1], reverse=True)[:_MAX_CONTEXT_BRANCHES]
+    total = sum(w for _, w in ranked)
+    if total <= 0:
+        return weights
+    return {key: w / total for key, w in ranked}
+
+
+def _project_horizon_variable_order(
+    recent_context: list[str],
+    state_labels: list[str],
+    chain_levels: dict[int, dict[tuple[str, ...], np.ndarray]],
+    context_len: int,
     horizon_steps: int,
 ) -> np.ndarray:
-    """Deterministic multi-step forecast: π_horizon = one_hot(current) @ P^steps."""
-    n = transition_matrix.shape[0]
-    initial = np.zeros(n, dtype=float)
-    initial[current_state_idx] = 1.0
-    powered = np.linalg.matrix_power(transition_matrix, horizon_steps)
-    return initial @ powered
+    """Multi-step forecast using variable-order context (last N states), not P^n alone.
+
+    Each step: P(next | last ``context_len`` states) with Laplace backoff.
+    Uncertainty is propagated by merging contexts that share the same suffix.
+    """
+    n = len(state_labels)
+    ctx_weights: dict[tuple[str, ...], float] = {
+        _context_key(recent_context, context_len): 1.0
+    }
+    dist = np.zeros(n, dtype=float)
+
+    for step in range(horizon_steps):
+        step_dist = np.zeros(n, dtype=float)
+        next_weights: dict[tuple[str, ...], float] = {}
+
+        for ctx_key, weight in ctx_weights.items():
+            if weight < _MIN_BRANCH_PROB:
+                continue
+            history = list(ctx_key)
+            local_dist = _predict_next_distribution(history, chain_levels, context_len)
+            step_dist += weight * local_dist
+
+            if step < horizon_steps - 1:
+                for j, label in enumerate(state_labels):
+                    branch_prob = weight * float(local_dist[j])
+                    if branch_prob < _MIN_BRANCH_PROB:
+                        continue
+                    extended = list(ctx_key) + [label]
+                    new_key = _context_key(extended, context_len)
+                    next_weights[new_key] = next_weights.get(new_key, 0.0) + branch_prob
+
+        dist = step_dist
+        ctx_weights = _prune_context_weights(next_weights)
+
+    total = float(dist.sum())
+    return dist / total if total > 0 else dist
 
 
 def _compute_equilibrium_distribution(
@@ -347,41 +401,53 @@ def _build_calculation_sources(
             },
         },
         "horizon_positive_probability": {
-            "method": "markov_chain_matrix_power",
-            "formula": f"one_hot({current_state}) @ P^{horizon_steps}, then sum P(state) for bins ≥ 0%",
+            "method": "variable_order_context_horizon",
+            "formula": (
+                f"propagate P(next | last {context_len} states) forward {horizon_steps} steps, "
+                "then sum P(state) for bins ≥ 0%"
+            ),
             "description": (
-                "Deterministic multi-step forecast using the empirical first-order "
-                "transition matrix P (no Monte Carlo, no moving averages)."
+                "Multi-step forecast respects the last N return states (variable-order Markov). "
+                "Longer horizons still spread uncertainty, but recent context is used at every step."
             ),
             "inputs": {
-                "current_state": current_state,
-                "current_state_index": current_state_idx,
+                "context": recent_context,
+                "context_len": context_len,
                 "horizon_steps": horizon_steps,
+                "current_state": current_state,
             },
         },
         "distribution_after_horizon": {
-            "method": "markov_chain_matrix_power",
-            "formula": f"π_horizon = one_hot(current_state) @ P^{horizon_steps}",
-            "description": "State probabilities after n trading days via matrix exponentiation.",
+            "method": "variable_order_context_horizon",
+            "formula": (
+                f"π_0 = 1 on current context; π_{{t+1}}(s') = "
+                f"Σ_s π_t(s) · P(s' | last {context_len} states)"
+            ),
+            "description": (
+                "Horizon distribution from iterative variable-order transitions "
+                "(not first-order P^n alone)."
+            ),
             "inputs": {
-                "current_state": current_state,
+                "context": recent_context,
+                "context_len": context_len,
                 "horizon_steps": horizon_steps,
             },
         },
         "expected_return_horizon": {
-            "method": "markov_chain_matrix_power",
+            "method": "variable_order_context_horizon",
             "formula": "Σ P_horizon(state) × mean_return(state)",
-            "description": "Expected cumulative return implied by the horizon state distribution.",
-            "inputs": {"horizon_steps": horizon_steps},
+            "description": "Expected return implied by the context-aware horizon distribution.",
+            "inputs": {"horizon_steps": horizon_steps, "context_len": context_len},
         },
         "estimated_close_horizon": {
-            "method": "markov_chain_matrix_power",
+            "method": "variable_order_context_horizon",
             "formula": "last_close × (1 + expected_return_horizon)",
-            "description": "Projected close after the forecast horizon from pure Markov math.",
+            "description": "Projected close after the forecast horizon from context-aware Markov math.",
             "inputs": {
                 "last_close": round(last_close, 6),
                 "expected_return_horizon": round(expected_return_horizon, 6),
                 "horizon_steps": horizon_steps,
+                "context_len": context_len,
             },
         },
         "equilibrium_distribution": {
@@ -500,7 +566,13 @@ def run_prediction_from_closes(
 
     first_order_matrix = build_empirical_transition_matrix(states, state_labels)
     current_state_idx = state_labels.index(recent_context[-1])
-    dist = _project_horizon_distribution(current_state_idx, first_order_matrix, steps)
+    dist = _project_horizon_variable_order(
+        recent_context=recent_context,
+        state_labels=state_labels,
+        chain_levels=chain_levels,
+        context_len=context_len,
+        horizon_steps=steps,
+    )
     equilibrium, equilibrium_meta = _compute_equilibrium_distribution(first_order_matrix)
 
     next_pos_prob = _positive_probability(row, r_min, bin_edges)
@@ -564,13 +636,15 @@ def run_prediction_from_closes(
             },
         }
         calculation_sources[f"horizon_state_prob__{i}"] = {
-            "method": "markov_chain_matrix_power",
-            "formula": f"(one_hot(current) @ P^{steps})[bin]",
+            "method": "variable_order_context_horizon",
+            "formula": f"P_horizon(bin | context_len={context_len}, steps={steps})",
             "description": f"Horizon probability for return bin: {label}.",
             "inputs": {
                 "state": label,
                 "probability": round(float(dist[i]), 6),
                 "horizon_steps": steps,
+                "context_len": context_len,
+                "context": recent_context,
             },
         }
         calculation_sources[f"equilibrium_state_prob__{i}"] = {
@@ -585,8 +659,9 @@ def run_prediction_from_closes(
         }
 
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "model": "uniform_binned_5d_returns_variable_order_markov",
+        "horizon_method": "variable_order_context_propagation",
         "symbol": _normalize_symbol(symbol),
         "period": period,
         "return_period_days": RETURN_PERIOD_DAYS,

@@ -227,7 +227,7 @@ function DashboardPage() {
         </div>
         <div className="dashboard-row">
           <label className="stocks-label" htmlFor="pred-context">
-            Context days
+            Context states (lookback)
           </label>
           <input
             id="pred-context"
@@ -239,6 +239,11 @@ function DashboardPage() {
             onChange={(e) => setContextLen(Number(e.target.value) || 1)}
           />
         </div>
+        <p className="muted small-print">
+          <strong>Horizon</strong> = how many trading days forward to forecast.{' '}
+          <strong>Context states</strong> = how many past return-bins the Markov chain remembers
+          (more context = sharper forecast; very long horizons still drift toward equilibrium).
+        </p>
         <div className="dashboard-actions">
           <button type="button" className="primary-btn" onClick={addSymbols}>
             Add symbols
@@ -436,7 +441,7 @@ function SelectedTickerDetail({ row }) {
           label={`Estimated close in ${horizonN}d`}
           value={formatNumber(mk.estimated_close_horizon, 2)}
           source={sources.estimated_close_horizon}
-          hint={`Horizon return: ${formatSignedPercent(mk.expected_return_horizon, 3)} via P^${horizonN}`}
+          hint={`Horizon return: ${formatSignedPercent(mk.expected_return_horizon, 3)} · context ${detail?.context_len ?? mk.context_len ?? '?'} states`}
         />
         <StatCard
           label={`P(positive in ${horizonN}d)`}
@@ -628,8 +633,8 @@ function SelectedTickerDetail({ row }) {
 
           <div className="card">
             <h2 className="subsection-title markov-section-title">
-              After {detail.horizon_steps} day{detail.horizon_steps === 1 ? '' : 's'} (P
-              <sup>{detail.horizon_steps}</sup>)
+              After {detail.horizon_steps} day{detail.horizon_steps === 1 ? '' : 's'} (context{' '}
+              {detail.context_len} states)
             </h2>
             <ul className="prob-list">
               {Object.entries(detail.distribution_after_horizon || {}).map(([k, v], idx) => (
@@ -682,8 +687,9 @@ function SelectedTickerDetail({ row }) {
           <div className="card muted-card">
             <p className="muted small-print">
               Model: {detail.model ?? 'empirical'} · Data: {detail.return_observations} return days ·
-              Context: last {detail.context_len} day(s). Next-day uses variable-order backoff;
-              horizon uses deterministic P<sup>n</sup> (no random simulation).
+              Context: last {detail.context_len} state(s). Both next-day and horizon forecasts use
+              variable-order Markov (P(next | last N states)). Longer horizons spread uncertainty
+              toward equilibrium — increase Context days for a sharper forecast.
             </p>
           </div>
         </>
