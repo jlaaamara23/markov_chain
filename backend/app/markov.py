@@ -424,8 +424,7 @@ def _build_calculation_sources(
                 f"Σ_s π_t(s) · P(s' | last {context_len} states)"
             ),
             "description": (
-                "Horizon distribution from iterative variable-order transitions "
-                "(not first-order P^n alone)."
+                "Horizon distribution from iterative variable-order transitions."
             ),
             "inputs": {
                 "context": recent_context,
@@ -775,11 +774,7 @@ def render_graph_png(
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, ax=ax, font_size=10)
 
     sym = _normalize_symbol(symbol)
-    ax.set_title(
-        f"Empirical Markov chain ({sym}, {period}, uniform {RETURN_PERIOD_DAYS}d return bins)\n"
-        f"Edges shown if P ≥ {edge_threshold:.2f}",
-        fontsize=13,
-    )
+    ax.set_title(f"Markov chain ({sym})", fontsize=13)
     ax.axis("off")
 
     buffer = io.BytesIO()

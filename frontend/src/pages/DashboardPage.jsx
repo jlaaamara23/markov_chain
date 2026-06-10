@@ -45,9 +45,9 @@ function formatSignedPercent(value, digits = 2) {
 }
 
 function trendCopy(direction) {
-  if (direction === 'up') return 'Uptrend (SMA20 > SMA50)'
-  if (direction === 'down') return 'Downtrend (SMA20 < SMA50)'
-  return 'Sideways (SMAs converging)'
+  if (direction === 'up') return 'Uptrend'
+  if (direction === 'down') return 'Downtrend'
+  return 'Sideways'
 }
 
 function rsiHint(rsi) {
@@ -175,9 +175,8 @@ function DashboardPage() {
     <section className="page">
       <h1 className="page-title">Investment analysis</h1>
       <p className="muted dashboard-lead">
-        Stock price forecasts use a pure Markov chain only (no Monte Carlo, no MA20/MA50 in
-        predictions). Tap any underlined number anywhere on this page to see its equation and
-        inputs. Profit score is Markov-based; technical indicators are for context only.
+        Compare stocks using Markov-chain forecasts, profit scores, and risk levels. Select a
+        ticker to view price history, predictions, and portfolio allocation.
       </p>
 
       <div className="card dashboard-controls">
@@ -303,12 +302,8 @@ function DashboardPage() {
         <div className="card error-card">
           <h2>Backend is running old code</h2>
           <p>
-            This dashboard needs the analysis API (
-            <code>schema_version: {ANALYZE_SCHEMA}</code>). Restart the backend with{' '}
-            <code className="inline-code">
-              python -m uvicorn app.main:app --reload --port 8001
-            </code>
-            .
+            The analysis service returned an outdated response format. Please restart the
+            server and try again.
           </p>
         </div>
       )}
@@ -420,16 +415,13 @@ function SelectedTickerDetail({ row }) {
       />
 
       <h2 className="subsection-title">Markov chain predictions</h2>
-      <p className="muted small-print">
-        Tap any underlined number on this page to see its equation, method, and inputs.
-      </p>
       <div className="card-grid">
         <StatCard
-          label="Profit score (Markov)"
+          label="Profit score"
           value={`${formatNumber(scoring.profit_score, 1)} / 100`}
           accent={scoring.recommendation_color}
           source={sources.profit_score}
-          hint="Markov only: expected returns (5d horizon, next day, equilibrium) + P(+) + confidence."
+          hint="Weighted score from expected returns, positive probabilities, and forecast confidence."
         />
         <StatCard
           label="Estimated next close"
@@ -480,7 +472,7 @@ function SelectedTickerDetail({ row }) {
         />
       </div>
 
-      <h2 className="subsection-title">Technical context (not used in predictions)</h2>
+      <h2 className="subsection-title">Technical indicators</h2>
       <div className="card-grid">
         <StatCard
           label="Volatility score"
@@ -684,14 +676,6 @@ function SelectedTickerDetail({ row }) {
             )}
           </div>
 
-          <div className="card muted-card">
-            <p className="muted small-print">
-              Model: {detail.model ?? 'empirical'} · Data: {detail.return_observations} return days ·
-              Context: last {detail.context_len} state(s). Both next-day and horizon forecasts use
-              variable-order Markov (P(next | last N states)). Longer horizons spread uncertainty
-              toward equilibrium — increase Context days for a sharper forecast.
-            </p>
-          </div>
         </>
       )}
     </>

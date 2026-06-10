@@ -3,7 +3,7 @@ import API_BASE from '../config'
 
 async function apiErrorMessage(res, pathHint) {
   if (res.status === 502 || res.status === 503) {
-    return `Cannot reach the API (HTTP ${res.status}). Run the backend: cd backend, then python -m uvicorn app.main:app --reload --port 8001. Request: ${pathHint}`
+    return `Cannot reach the API (HTTP ${res.status}). Make sure the server is running.`
   }
   let detail
   const ct = res.headers.get('content-type') ?? ''
@@ -13,7 +13,7 @@ async function apiErrorMessage(res, pathHint) {
   }
   if (typeof detail === 'string') {
     if (res.status === 404 && detail === 'Not Found') {
-      return `${detail}: no matching route (restart uvicorn so /stocks routes load). Command: cd backend && python -m uvicorn app.main:app --reload --port 8001. URL: ${pathHint}`
+      return `${detail}: no matching route. Restart the server and try again.`
     }
     return detail
   }

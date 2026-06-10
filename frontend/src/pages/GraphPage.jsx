@@ -46,10 +46,9 @@ function GraphPage() {
 
   return (
     <section className="page">
-      <h1 className="page-title">Transition graph</h1>
+      <h1 className="page-title">Markov chain</h1>
       <p className="muted dashboard-lead">
-        Empirical transitions between percentage-return buckets (for example{' '}
-        <strong>0.00% to 0.50%</strong>) for the chosen symbol.
+        Markov chain graph for the selected symbol.
       </p>
 
       <div className="card dashboard-controls graph-controls">
@@ -87,7 +86,7 @@ function GraphPage() {
       </div>
 
       <div className="card graph-card">
-        {isLoading && <p className="loading">Rendering transition graph…</p>}
+        {isLoading && <p className="loading">Loading Markov chain graph…</p>}
         {!isLoading && error && (
           <div className="error-card">
             <h2>Could not load graph</h2>
@@ -95,7 +94,7 @@ function GraphPage() {
           </div>
         )}
         {!isLoading && !error && imageUrl && (
-          <img className="graph-image" src={imageUrl} alt="Markov transition graph" />
+          <img className="graph-image" src={imageUrl} alt="Markov chain graph" />
         )}
       </div>
     </section>

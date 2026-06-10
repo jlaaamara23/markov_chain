@@ -86,7 +86,7 @@ function TopPickCallout({ topPick, amount, currency }) {
           </dd>
         </div>
         <div>
-          <dt>Markov expected next day</dt>
+          <dt>Expected next day</dt>
           <dd className={expectedNext >= 0 ? 'text-up' : 'text-down'}>
             <TraceableValue
               value={formatSignedPercent(expectedNext, 3)}
@@ -152,7 +152,7 @@ function TopPickCallout({ topPick, amount, currency }) {
                 source={{
                   method: 'markov_chain_next_day',
                   formula: 'invest_amount × expected_return_next_day',
-                  description: 'Expected dollar gain/loss on the next day from the Markov forecast.',
+                  description: 'Expected dollar gain/loss on the next day from the forecast.',
                   inputs: { invest_amount: validAmount, expected_return_next_day: expectedNext },
                 }}
               />

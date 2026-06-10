@@ -30,7 +30,7 @@ class StripApiPrefixMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = FastAPI(title="TradeMind AI Market Dashboard API")
+app = FastAPI(title="TradeMind Market Dashboard API")
 
 app.add_middleware(
     CORSMiddleware,

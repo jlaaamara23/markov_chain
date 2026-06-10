@@ -1,13 +1,13 @@
 """Profit-potential scoring, risk classification, and trade recommendation.
 
-All profit-score components come from the Markov chain output only.
+All profit-score components come from the Markov chain output.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Markov-only profit score weights (sum to 1.0).
+# Profit score weights (sum to 1.0).
 _WEIGHTS: dict[str, float] = {
     "horizon_return": 0.30,
     "horizon_positive": 0.20,

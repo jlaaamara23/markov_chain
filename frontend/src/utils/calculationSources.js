@@ -18,7 +18,7 @@ export const ALLOCATION_SOURCES = {
     method: 'profit_score_weighting',
     formula: 'bucket_dollars × (stock_profit_score / Σ scores in bucket)',
     description:
-      'Within each bucket, dollars are split in proportion to each stock’s Markov profit score (minimum weight 1).',
+      'Within each bucket, dollars are split in proportion to each stock’s profit score (minimum weight 1).',
     inputs: {},
   },
   stock_percent_of_total: {

@@ -1,4 +1,4 @@
-"""Calculation provenance for the UI — tap any number to see its formula."""
+"""Calculation provenance metadata for traceable UI values."""
 
 from __future__ import annotations
 
@@ -56,13 +56,13 @@ def build_indicator_sources(
         "ma_20": _src(
             "simple_moving_average",
             "mean(close[-20:])",
-            "20-day simple moving average of the close price (context only, not used in Markov predictions).",
+            "20-day simple moving average of the close price.",
             {"ma_20": indicators.get("ma_20"), "window": 20},
         ),
         "ma_50": _src(
             "simple_moving_average",
             "mean(close[-50:])",
-            "50-day simple moving average of the close price (context only, not used in Markov predictions).",
+            "50-day simple moving average of the close price.",
             {"ma_50": indicators.get("ma_50"), "window": 50},
         ),
         "rsi_14": _src(
@@ -97,7 +97,7 @@ def build_indicator_sources(
         ),
         "trend_direction": _src(
             "sma_spread",
-            "(SMA20 − SMA50) / SMA50; up if > 0.5%, down if < −0.5%",
+            "(short_MA − long_MA) / long_MA; up if > 0.5%, down if < −0.5%",
             "Coarse trend tag from the relative position of the 20- and 50-day SMAs.",
             {
                 "trend_direction": indicators.get("trend_direction"),
@@ -147,7 +147,7 @@ def build_scoring_sources(
         "profit_score": _src(
             "markov_weighted_score",
             "Σ (component_value × weight) × 100",
-            "Profit score from Markov expected returns and probabilities only (no MA or Monte Carlo).",
+            "Profit score from expected returns, positive probabilities, and forecast confidence.",
             {
                 "profit_score": scoring.get("profit_score"),
                 "weights": _WEIGHTS,
@@ -156,7 +156,7 @@ def build_scoring_sources(
         "risk_level": _src(
             "volatility_buckets",
             "low if volatility_score < 30; medium if < 60; else high",
-            "Risk bucket derived from the volatility score (technical context).",
+            "Risk bucket derived from the volatility score.",
             {"risk_level": scoring.get("risk_level")},
         ),
         "recommendation": _src(
