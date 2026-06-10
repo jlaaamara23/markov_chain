@@ -453,7 +453,7 @@ function SelectedTickerDetail({ row }) {
           label="Equilibrium P(+)"
           value={formatPercent(mk.equilibrium_positive_probability, 1)}
           source={sources.equilibrium_positive_probability}
-          hint="Long-run stationary distribution π = πP (power iteration)."
+          hint="Long-run chance of a flat or positive return."
         />
         <StatCard
           label="Predicted next state"
@@ -645,12 +645,12 @@ function SelectedTickerDetail({ row }) {
 
           <div className="card">
             <h2 className="subsection-title markov-section-title">
-              Equilibrium distribution (π = πP) — uniform {detail.return_period_days ?? 5}d bins
+              Long-run distribution — {detail.return_period_days ?? 5}-day return ranges
             </h2>
             {detail.bin_min_percent != null && detail.bin_max_percent != null && (
               <p className="muted small-print">
-                Range: {Number(detail.bin_min_percent).toFixed(2)}% to{' '}
-                {Number(detail.bin_max_percent).toFixed(2)}% (data min/max, equal width, no ±inf).
+                Return ranges from {Number(detail.bin_min_percent).toFixed(2)}% to{' '}
+                {Number(detail.bin_max_percent).toFixed(2)}%.
               </p>
             )}
             <ul className="prob-list">
@@ -670,8 +670,7 @@ function SelectedTickerDetail({ row }) {
             </ul>
             {detail.equilibrium_meta && (
               <p className="muted small-print">
-                Power iteration: {detail.equilibrium_meta.iterations} steps
-                {detail.equilibrium_meta.converged ? ' (converged)' : ' (max iterations)'}.
+                Calculated in {detail.equilibrium_meta.iterations} steps until the pattern stabilized.
               </p>
             )}
           </div>

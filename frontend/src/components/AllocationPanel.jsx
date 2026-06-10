@@ -150,9 +150,9 @@ function TopPickCallout({ topPick, amount, currency }) {
               <TraceableValue
                 value={`${expectedGain >= 0 ? '+' : ''}${formatMoney(expectedGain, currency)}`}
                 source={{
-                  method: 'markov_chain_next_day',
-                  formula: 'invest_amount × expected_return_next_day',
-                  description: 'Expected dollar gain/loss on the next day from the forecast.',
+                  method: 'markov_forecast',
+                  formula: 'Investment × expected next-day return.',
+                  description: 'Estimated dollar gain or loss on the next trading day.',
                   inputs: { invest_amount: validAmount, expected_return_next_day: expectedNext },
                 }}
               />
@@ -309,9 +309,9 @@ function AllocationPanel({ results }) {
                   value={formatMoney(allocation.cashRemaining, currency)}
                   source={{
                     method: 'rounding_remainder',
-                    formula: 'total_invest − Σ rounded_stock_allocations',
+                    formula: 'Total investment minus the sum of rounded stock amounts.',
                     description:
-                      'Leftover cash from cent rounding; added to the highest-score stock when possible.',
+                      'Small leftover from rounding to cents; added to the top-scoring stock when possible.',
                     inputs: { cash_remaining: allocation.cashRemaining },
                   }}
                 />

@@ -330,7 +330,7 @@ def _compute_equilibrium_distribution(
         "converged": converged,
         "tolerance": tol,
         "method": "power_iteration",
-        "formula": "π_{k+1} = π_k P until ||π_{k+1} − π_k||₁ < tolerance",
+        "formula": "Repeat transitions until the long-run chances stop changing.",
     }
 
 
@@ -361,23 +361,19 @@ def _build_calculation_sources(
     """Provenance for UI: tap a number to see how it was derived."""
     return {
         "estimated_next_close": {
-            "method": "markov_chain_next_day",
-            "formula": "last_close × (1 + expected_return_next_day)",
-            "description": (
-                "Expected next close from the variable-order Markov chain: "
-                "weighted average of historical mean returns in each next-day state bin."
-            ),
+            "method": "markov_forecast",
+            "formula": "Last price × (1 + expected next-day return).",
+            "description": "Tomorrow's expected closing price based on the Markov forecast.",
             "inputs": {
                 "last_close": round(last_close, 6),
                 "expected_return_next_day": round(expected_return_next_day, 6),
             },
         },
         "expected_return_next_day": {
-            "method": "markov_chain_next_day",
-            "formula": "Σ P(next_state) × mean_return(state)",
+            "method": "markov_forecast",
+            "formula": "For each possible outcome: (chance × average return) — then add them up.",
             "description": (
-                f"Analytic next-day distribution from the last {context_len} return bins "
-                f"({', '.join(recent_context)}), with Laplace smoothing and backoff."
+                f"Expected return tomorrow, using the last {context_len} return ranges as context."
             ),
             "inputs": {
                 "context": recent_context,
@@ -385,15 +381,15 @@ def _build_calculation_sources(
             },
         },
         "next_positive_probability": {
-            "method": "markov_chain_next_day",
-            "formula": "Σ P(state) for bins with lower bound ≥ 0%",
-            "description": "Sum of next-day Markov probabilities over non-negative return bins.",
+            "method": "markov_forecast",
+            "formula": "Add the chances of all outcomes where return is zero or positive.",
+            "description": "Probability of a flat or positive return tomorrow.",
             "inputs": {"current_state": current_state},
         },
         "predicted_state": {
-            "method": "markov_chain_next_day",
-            "formula": "argmax P(next_state | context)",
-            "description": "Most likely next-day return bin from the Markov chain.",
+            "method": "markov_forecast",
+            "formula": "The return range with the highest probability tomorrow.",
+            "description": "The single most likely outcome for the next trading day.",
             "inputs": {
                 "predicted_state": predicted_state,
                 "confidence": round(confidence, 6),
@@ -401,15 +397,11 @@ def _build_calculation_sources(
             },
         },
         "horizon_positive_probability": {
-            "method": "variable_order_context_horizon",
+            "method": "markov_forecast",
             "formula": (
-                f"propagate P(next | last {context_len} states) forward {horizon_steps} steps, "
-                "then sum P(state) for bins ≥ 0%"
+                f"Forecast {horizon_steps} days ahead, then add chances of zero or positive returns."
             ),
-            "description": (
-                "Multi-step forecast respects the last N return states (variable-order Markov). "
-                "Longer horizons still spread uncertainty, but recent context is used at every step."
-            ),
+            "description": f"Chance the stock ends up flat or up after {horizon_steps} trading days.",
             "inputs": {
                 "context": recent_context,
                 "context_len": context_len,
@@ -418,14 +410,9 @@ def _build_calculation_sources(
             },
         },
         "distribution_after_horizon": {
-            "method": "variable_order_context_horizon",
-            "formula": (
-                f"π_0 = 1 on current context; π_{{t+1}}(s') = "
-                f"Σ_s π_t(s) · P(s' | last {context_len} states)"
-            ),
-            "description": (
-                "Horizon distribution from iterative variable-order transitions."
-            ),
+            "method": "markov_forecast",
+            "formula": f"Step the Markov chain forward {horizon_steps} days — chance of each outcome.",
+            "description": "Full probability spread across all return ranges after the forecast period.",
             "inputs": {
                 "context": recent_context,
                 "context_len": context_len,
@@ -433,15 +420,15 @@ def _build_calculation_sources(
             },
         },
         "expected_return_horizon": {
-            "method": "variable_order_context_horizon",
-            "formula": "Σ P_horizon(state) × mean_return(state)",
-            "description": "Expected return implied by the context-aware horizon distribution.",
+            "method": "markov_forecast",
+            "formula": "For each horizon outcome: (chance × average return) — then add them up.",
+            "description": f"Average expected return over the next {horizon_steps} trading days.",
             "inputs": {"horizon_steps": horizon_steps, "context_len": context_len},
         },
         "estimated_close_horizon": {
-            "method": "variable_order_context_horizon",
-            "formula": "last_close × (1 + expected_return_horizon)",
-            "description": "Projected close after the forecast horizon from context-aware Markov math.",
+            "method": "markov_forecast",
+            "formula": "Last price × (1 + expected return over the horizon).",
+            "description": f"Expected price after {horizon_steps} trading days.",
             "inputs": {
                 "last_close": round(last_close, 6),
                 "expected_return_horizon": round(expected_return_horizon, 6),
@@ -450,11 +437,11 @@ def _build_calculation_sources(
             },
         },
         "equilibrium_distribution": {
-            "method": "stationary_distribution",
-            "formula": equilibrium_meta.get("formula", "π = πP"),
+            "method": "long_run_average",
+            "formula": "Repeat transitions until chances settle into a steady long-run pattern.",
             "description": (
-                f"Equilibrium over {n_bins} equal-width {return_period}-day return bins "
-                f"from {r_min * 100:.2f}% to {r_max * 100:.2f}% (data min/max, no ±inf)."
+                f"Long-run chances across {n_bins} return ranges "
+                f"from {r_min * 100:.2f}% to {r_max * 100:.2f}%."
             ),
             "inputs": {
                 "return_period_days": return_period,
@@ -467,24 +454,24 @@ def _build_calculation_sources(
             },
         },
         "equilibrium_expected_return": {
-            "method": "stationary_distribution",
-            "formula": "Σ π_equilibrium(state) × mean_return(state)",
-            "description": f"Expected {return_period}-day return implied by the equilibrium distribution.",
+            "method": "long_run_average",
+            "formula": "For each long-run outcome: (steady chance × average return) — add up.",
+            "description": f"Average {return_period}-day return in the long run.",
             "inputs": {
                 "equilibrium_expected_return": round(equilibrium_expected_return, 6),
                 "return_period_days": return_period,
             },
         },
         "equilibrium_positive_probability": {
-            "method": "stationary_distribution",
-            "formula": "Σ π_equilibrium(state) for bins with lower bound ≥ 0%",
-            "description": "Equilibrium probability mass on non-negative return bins.",
+            "method": "long_run_average",
+            "formula": "Add long-run chances of all zero or positive return ranges.",
+            "description": "Long-run probability of a flat or positive return.",
             "inputs": {"iterations": equilibrium_meta.get("iterations")},
         },
         "confidence": {
-            "method": "markov_chain_next_day",
-            "formula": "max P(next_state | context)",
-            "description": "Probability of the most likely next-day return bin.",
+            "method": "markov_forecast",
+            "formula": "The highest single probability among tomorrow's possible outcomes.",
+            "description": "How confident the model is in its top pick for tomorrow.",
             "inputs": {
                 "predicted_state": predicted_state,
                 "confidence": round(confidence, 6),
@@ -614,9 +601,9 @@ def run_prediction_from_closes(
     )
     for i, label in enumerate(state_labels):
         calculation_sources[f"next_state_prob__{i}"] = {
-            "method": "markov_chain_next_day",
-            "formula": "P(next_state = bin | context)",
-            "description": f"Next-day probability for return bin: {label}.",
+            "method": "markov_forecast",
+            "formula": "Chance this return range happens tomorrow.",
+            "description": f"Probability for range: {label}.",
             "inputs": {
                 "state": label,
                 "probability": round(float(row[i]), 6),
@@ -624,9 +611,9 @@ def run_prediction_from_closes(
             },
         }
         calculation_sources[f"next_contribution__{i}"] = {
-            "method": "markov_chain_next_day",
-            "formula": "P(next_state) × mean_return(state)",
-            "description": f"Expected return contribution from bin: {label}.",
+            "method": "markov_forecast",
+            "formula": "Chance × average return for this range.",
+            "description": f"How much this range ({label}) adds to the expected return.",
             "inputs": {
                 "state": label,
                 "probability": round(float(row[i]), 6),
@@ -635,9 +622,9 @@ def run_prediction_from_closes(
             },
         }
         calculation_sources[f"horizon_state_prob__{i}"] = {
-            "method": "variable_order_context_horizon",
-            "formula": f"P_horizon(bin | context_len={context_len}, steps={steps})",
-            "description": f"Horizon probability for return bin: {label}.",
+            "method": "markov_forecast",
+            "formula": f"Chance this range happens after {steps} trading days.",
+            "description": f"Horizon probability for range: {label}.",
             "inputs": {
                 "state": label,
                 "probability": round(float(dist[i]), 6),
@@ -647,9 +634,9 @@ def run_prediction_from_closes(
             },
         }
         calculation_sources[f"equilibrium_state_prob__{i}"] = {
-            "method": "stationary_distribution",
-            "formula": "π_equilibrium[state] where π = πP",
-            "description": f"Equilibrium probability for return bin: {label}.",
+            "method": "long_run_average",
+            "formula": "Long-run steady chance of this return range.",
+            "description": f"Equilibrium probability for range: {label}.",
             "inputs": {
                 "state": label,
                 "probability": round(float(equilibrium[i]), 6),

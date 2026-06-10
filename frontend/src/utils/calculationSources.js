@@ -1,54 +1,54 @@
-/** Client-side formulas for values computed in the browser (e.g. portfolio allocation). */
+/** Client-side plain-language notes for values computed in the browser. */
 
 export const ALLOCATION_SOURCES = {
   bucket_target_weight: {
-    method: 'portfolio_bucket_weight',
-    formula: 'strong_growth 50% · medium_risk 30% · stable 20% (redistributed if a bucket is empty)',
+    method: 'portfolio_split',
+    formula: 'Strong-growth 50%, medium-risk 30%, stable 20% of your investment.',
     description:
-      'Default bucket targets. If a bucket has no eligible stocks, its weight is split across the remaining buckets.',
+      'Default split across risk buckets. If a bucket is empty, its share goes to the other buckets.',
     inputs: { strong_growth: 0.5, medium_risk: 0.3, stable: 0.2 },
   },
   bucket_allocated_amount: {
-    method: 'portfolio_bucket_weight',
-    formula: 'total_invest × effective_bucket_weight',
-    description: 'Dollar amount assigned to this risk bucket before splitting across stocks inside it.',
+    method: 'portfolio_split',
+    formula: 'Total investment × this bucket’s share.',
+    description: 'How many dollars go to this risk group before splitting between stocks.',
     inputs: {},
   },
   stock_allocation_amount: {
     method: 'profit_score_weighting',
-    formula: 'bucket_dollars × (stock_profit_score / Σ scores in bucket)',
+    formula: 'Bucket dollars × (this stock’s score ÷ total scores in the bucket).',
     description:
-      'Within each bucket, dollars are split in proportion to each stock’s profit score (minimum weight 1).',
+      'Within each bucket, higher profit-score stocks get a larger slice of the money.',
     inputs: {},
   },
   stock_percent_of_total: {
     method: 'profit_score_weighting',
-    formula: 'stock_allocation / total_invest × 100',
-    description: 'Share of the total investment amount allocated to this ticker.',
+    formula: 'Stock allocation ÷ total investment × 100.',
+    description: 'What percent of your total investment goes to this stock.',
     inputs: {},
   },
   shares_estimated: {
     method: 'share_estimate',
-    formula: 'allocation_dollars / last_close',
-    description: 'Approximate whole-share count if the full allocation were used at the last close.',
+    formula: 'Allocation dollars ÷ last closing price.',
+    description: 'Rough number of shares you could buy at the last closing price.',
     inputs: {},
   },
   top_pick_expected_next_day: {
-    method: 'markov_chain_next_day',
-    formula: 'Σ P(next_state) × mean_return(state)',
-    description: 'Markov expected next-day return for the highest-scoring non-avoid ticker.',
+    method: 'markov_forecast',
+    formula: 'For each outcome: (chance × average return) — add up.',
+    description: 'Expected next-day return for the top-scoring stock.',
     inputs: {},
   },
   top_pick_horizon_positive: {
-    method: 'markov_chain_matrix_power',
-    formula: 'one_hot(current_state) @ P^n, sum bins ≥ 0%',
-    description: 'Horizon P(+) for the top pick from deterministic Markov matrix power.',
+    method: 'markov_forecast',
+    formula: 'Add chances of all flat or positive outcomes over the forecast period.',
+    description: 'Chance the top pick ends flat or up over the horizon.',
     inputs: {},
   },
   top_pick_what_if_value: {
-    method: 'markov_chain_next_day',
-    formula: 'invest_amount × (1 + expected_return_next_day)',
-    description: 'Hypothetical next-day portfolio value if the entire amount were in the top pick.',
+    method: 'markov_forecast',
+    formula: 'Investment amount × (1 + expected next-day return).',
+    description: 'What your money could be worth the next day if all went to the top pick.',
     inputs: {},
   },
 }
